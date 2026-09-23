@@ -1,6 +1,14 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+/** Live provider checks are opt-in only: `pnpm test:live` (Pyth), `pnpm test:jupiter-live`, or "1" for all. */
+function testInclude(live: string | undefined): string[] {
+  if (live === "pyth") return ["tests/live/pyth.live.test.ts"];
+  if (live === "jupiter") return ["tests/live/jupiter.live.test.ts"];
+  if (live === "1") return ["tests/live/**/*.test.ts"];
+  return ["tests/unit/**/*.test.{ts,tsx}", "tests/integration/**/*.test.ts"];
+}
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -11,11 +19,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include:
-      // Live provider checks are opt-in only (`pnpm test:live`).
-      process.env.CIRCUIT_LIVE_TESTS === "1"
-        ? ["tests/live/**/*.test.ts"]
-        : ["tests/unit/**/*.test.{ts,tsx}", "tests/integration/**/*.test.ts"],
+    include: testInclude(process.env.CIRCUIT_LIVE_TESTS),
     // Each integration file boots an in-process Postgres (PGlite) and applies the migrations.
     hookTimeout: 60_000,
   },

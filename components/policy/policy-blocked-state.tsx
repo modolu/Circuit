@@ -10,6 +10,8 @@ export interface ConfiguredAssetStatus {
   referenceSymbol: string;
   referenceFeedId: number;
   liveReferenceAccess: "PASSED" | "NOT_ENTITLED";
+  /** Jupiter Tokens V2 recognition plus a quote-only spot route. Not proof of Trigger execution. */
+  jupiterRoutingVerified: boolean;
   executionVerified: boolean;
 }
 
@@ -57,7 +59,12 @@ export function PolicyBlockedState({ configured }: { configured: ConfiguredAsset
                 state="verified"
               />
               <Check label="Live reference access" state={asset.liveReferenceAccess === "PASSED" ? "verified" : "pending"} />
-              <Check label="Jupiter execution verification" state={asset.executionVerified ? "verified" : "pending"} />
+              <Check
+                label="Jupiter token & routing verified"
+                detail="Tokens API recognized · spot route found"
+                state={asset.jupiterRoutingVerified ? "verified" : "pending"}
+              />
+              <Check label="Live Jupiter Trigger order" state={asset.executionVerified ? "verified" : "pending"} />
             </ul>
           </div>
         ))}

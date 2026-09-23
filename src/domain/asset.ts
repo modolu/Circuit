@@ -30,6 +30,38 @@ export const comparisonFeedSchema = z.object({
   note: z.string().min(1),
 });
 
+/**
+ * Execution-verification ladder for Jupiter Trigger V2 (Task 7). Each level is
+ * recorded separately, so "Jupiter can swap it" is never mistaken for "Trigger V2
+ * is proven end to end". Execution stays disabled until LIVE_TRIGGER_ORDER_VERIFIED.
+ */
+export const JUPITER_VERIFICATION_LEVELS = [
+  "IDENTITY_VERIFIED",
+  "JUPITER_TOKEN_RECOGNIZED",
+  "SPOT_ROUTE_VERIFIED",
+  "TOKEN_EXTENSIONS_COMPATIBLE",
+  "TRIGGER_API_ACCESS_VERIFIED",
+  "TRIGGER_DEPOSIT_CRAFT_VERIFIED",
+  "LIVE_TRIGGER_ORDER_VERIFIED",
+] as const;
+export type JupiterVerificationLevel = (typeof JUPITER_VERIFICATION_LEVELS)[number];
+
+export const VERIFICATION_RESULTS = ["PASSED", "FAILED", "RESTRICTED", "NOT_TESTED"] as const;
+
+export const jupiterVerificationSchema = z.object({
+  checkedAt: z.iso.datetime(),
+  docsVersion: z.string().min(1),
+  levels: z.record(
+    z.enum(JUPITER_VERIFICATION_LEVELS),
+    z.object({ result: z.enum(VERIFICATION_RESULTS), detail: z.string().min(1) }),
+  ),
+  sides: z.object({
+    BUY: z.object({ result: z.enum(VERIFICATION_RESULTS), detail: z.string().min(1) }),
+    SELL: z.object({ result: z.enum(VERIFICATION_RESULTS), detail: z.string().min(1) }),
+  }),
+});
+export type JupiterVerification = z.infer<typeof jupiterVerificationSchema>;
+
 export const assetMetadataSchema = z.object({
   reference: primaryReferenceSchema,
   comparisonFeeds: z.array(comparisonFeedSchema).default([]),

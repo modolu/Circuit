@@ -302,6 +302,37 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
 - Server-side only. Provider DTOs never become DB or domain types. The mapping from provider state to Circuit status exists in **one** place.
 - Jupiter owns keeper execution and order lifecycle. Circuit owns intent, reference context, and audit state.
 
+**Jupiter Trigger V2 (verified 2026-09-23, Task 7; `src/integrations/jupiter/`)**
+- **Sources:** docs `developers.jup.ag/docs/llms-full.txt` (trigger/*) and OpenAPI `trigger/v2/trigger.yaml` v2.0.0. Trigger V2 is **beta**, so schemas are non-strict (unknown fields ignored).
+- **Changelog:** May 2026 made `orderType`/`orderSubType` mandatory on craft-deposit; April 2026 removed `/auth/verify-token`. V1 is not used.
+- **Base and auth:** `https://api.jup.ag/trigger/v2`, header `x-api-key`. Auth is `POST /auth/challenge` (message|transaction, 5 min TTL), then the wallet signs, then `POST /auth/verify` (base58 signature) returns a **JWT valid 24h with no refresh endpoint**. It's the same JWT for every call. Never store it in localStorage; Task 8 decides ephemeral vs encrypted persistence.
+- **Flow:** `GET /vault` (404 means none; `GET /vault/register` creates a Privy custodial vault, so do not call it casually) → `POST /deposit/craft` `{inputMint, outputMint, userAddress, amount, orderType:"price", orderSubType:"single"}` returns an **unsigned** tx plus a single-use `requestId` → wallet signs → `POST /orders/price` `{orderType:"single", depositRequestId, depositSignedTx, userPubkey, inputMint, inputAmount, outputMint, triggerMint, triggerCondition, triggerPriceUsd, slippageBps, expiresAt}` returns `{id, txSignature (deposit), depositConfirmed}`.
+- **Monitoring and cancel:** `GET /orders/history` (no get-by-id). Cancel is `POST /orders/price/cancel/{id}` (stops fills; unsigned withdrawal) → sign → `POST /orders/price/confirm-cancel/{id}` `{signedTransaction, cancelRequestId}`. Expired orders need the same withdrawal.
+- **Mapping** (`toJupiterSinglePriceOrderIntent`, pure; unit-tested for all four directions):
+  - `triggerMint` = the stock token (the **output on BUY**, the **input on SELL**).
+  - `triggerCondition` = `above|below` from the direction.
+  - `inputAmount` = the atomic string.
+  - `slippageBps` is always sent (25/50/100 are within 0–10000; this avoids the RTSE/2000 bps defaults).
+  - `expiresAt` = UTC `Date.getTime()` in **milliseconds**.
+  - Values known at compile time are separate from `depositRequestId`, `depositSignedTx` and `userPubkey` (`toCreatePriceOrderRequest`).
+- **Numeric boundary:** `triggerPriceUsd` is a JSON number. `toProviderPriceNumber` converts Circuit's exact decimal string only at this boundary, and refuses anything over 15 significant digits or that doesn't round-trip exactly. The database and domain stay exact strings.
+- **Provider minimum:** `JUPITER_TRIGGER_MIN_ORDER_USD = "10"` per order (deposit value at market price). Drafts may be smaller. Live arming must check `meetsProviderMinimum` with a current price **before** asking for a wallet signature.
+- **States:** `normalizeJupiterOrderState`: open→OPEN, filled→FILLED, cancelled→CANCELLED, expired→EXPIRED, failed→FAILED. pending/executing/pending_withdraw→IN_PROGRESS (no transition). Anything else→UNKNOWN (never guessed).
+- **Idempotency:** Trigger has no client request id. The deposit `requestId` is the provider idempotency key; persist it before the wallet signs.
+- **Token-2022** (`token-compat.ts`): deposit (input) mints with `transferFeeConfig` or `transferHook` are rejected unless whitelisted.
+- **AAPLx findings (Task 7):**
+  - Tokens V2 exact-mint match: decimals 8, Token-2022, `isVerified`, tags `xstocks`/`stocks`.
+  - Quote-only route 10.5 USDC → AAPLx exists. The reverse also quotes.
+  - Onchain: **no transferFeeConfig; transferHook present with programId null**. Also permanentDelegate, defaultAccountState, scaledUiAmountConfig, pausable (not paused), confidentialTransferMint, and a freeze authority.
+  - **BUY (deposit USDC): compatible per docs. SELL (deposit AAPLx): RESTRICTED unless whitelisted.**
+  - The **ScaledUiAmount multiplier is ≈1.00327** (new multiplier active), and Jupiter triggers on AAPLx's own USD price. Quantify the Pyth AAPL vs AAPLx gap before any live order.
+- **Proven vs not** (`assets.ts` `jupiter.levels`):
+  - PASSED: identity, token recognition, spot route.
+  - RESTRICTED: extensions (SELL).
+  - NOT_TESTED: Trigger API access with our key (**JUPITER_API_KEY not configured**; the challenge endpoint answered on Jupiter's documented keyless tier), JWT, vault, deposit craft, live order.
+  - Execution stays disabled.
+- **Probe:** `pnpm test:jupiter-live` runs the opt-in, no-funds checks and prints a summary. It never signs, never sends a `taker`, and never registers a vault.
+
 **Reconciliation (Vercel Hobby constraint)**
 - Reconciliation runs on **policy page load**, **manual "Refresh status"**, and **after cancel completion**. This is the primary path for the hackathon.
 - `app/api/cron/reconcile/route.ts` still exists (CRON_SECRET-protected) and can be invoked manually. Do not rely on minute-level Vercel Cron, because Hobby does not guarantee it. If a schedule is configured, it runs at most daily and serves only as a backstop.
@@ -331,7 +362,7 @@ Scripts marked ✅ exist and work. The others are added in the milestone that in
 | ✅ Lint | `pnpm lint` (ESLint CLI with `--max-warnings=0`; Next.js 16 no longer ships `next lint`) |
 | ✅ Typecheck | `pnpm typecheck` (`next typegen && tsc --noEmit`; typegen creates the route types `tsc` needs) |
 | ✅ Unit + service tests | `pnpm test` (Vitest run) / `pnpm test:watch` |
-| ✅ Live provider checks (opt-in) | `pnpm test:live`: loads `.env.local` and calls real Pyth (symbology match, key entitlement, live mapping). Never part of `pnpm test` or CI. |
+| ✅ Live provider checks (opt-in) | `pnpm test:live` (Pyth: symbology match, key entitlement, live mapping) and `pnpm test:jupiter-live` (Jupiter: key, exact-mint token, onchain extensions, quote-only route, auth challenge; no funds). Both load `.env.local`. Never part of `pnpm test` or CI. |
 | ✅ Repository tests (isolated in-process Postgres) | included in `pnpm test`; `tests/integration/` runs the committed migrations on PGlite, never Neon |
 | E2E | `pnpm test:e2e` (Playwright, mock wallet + mock Jupiter) |
 | ✅ Build | `pnpm build` |

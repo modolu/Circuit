@@ -66,7 +66,7 @@ describe("New policy UI", () => {
   it("explains the entitlement blocker honestly without a create action", () => {
     const html = renderToStaticMarkup(
       <PolicyBlockedState
-        configured={[{ symbol: "AAPLx", displayName: "Apple xStock", mintAddress: "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp", referenceSymbol: "Equity.US.AAPL/USD", referenceFeedId: 922, liveReferenceAccess: "NOT_ENTITLED", executionVerified: false }]}
+        configured={[{ symbol: "AAPLx", displayName: "Apple xStock", mintAddress: "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp", referenceSymbol: "Equity.US.AAPL/USD", referenceFeedId: 922, liveReferenceAccess: "NOT_ENTITLED", jupiterRoutingVerified: true, executionVerified: false }]}
       />,
     );
     const t = text(html);
@@ -75,7 +75,8 @@ describe("New policy UI", () => {
     expect(t).toMatch(/Solana mint verified XsbE…JzJp VERIFIED/);
     expect(t).toMatch(/Pyth mapping verified Equity\.US\.AAPL\/USD · feed 922 VERIFIED/);
     expect(t).toMatch(/Live reference access PENDING/);
-    expect(t).toMatch(/Jupiter execution verification PENDING/);
+    expect(t).toMatch(/Jupiter token &amp; routing verified .*VERIFIED/);
+    expect(t).toMatch(/Live Jupiter Trigger order PENDING/);
     expect(html).not.toMatch(/<button/);
   });
 });

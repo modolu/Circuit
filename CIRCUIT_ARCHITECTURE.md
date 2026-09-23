@@ -473,8 +473,10 @@ No new top-level directory without editing this file.
 │   │   └── jupiter/
 │   │       ├── client.ts
 │   │       ├── auth.ts
-│   │       ├── trigger.ts
+│   │       ├── trigger.ts    (pure Circuit → Trigger V2 mapping, provider constants)
 │   │       ├── types.ts      (Circuit-owned provider contract)
+│   │       ├── schemas.ts    (Zod DTOs for Trigger V2, Tokens V2, Swap quote)
+│   │       ├── token-compat.ts (Trigger Token-2022 deposit restrictions, per side)
 │   │       ├── provider.ts   (mode → provider; never live→mock fallback)
 │   │       ├── live.ts       (refuses until the Trigger V2 adapter exists)
 │   │       └── mock.ts       (simulated provider, demo only)
@@ -727,17 +729,27 @@ All Jupiter API keys stay server-side.
 
 Provider DTOs never become DB/domain types.
 
-Integration responsibilities:
+Integration responsibilities, verified against Trigger V2 docs and OpenAPI 2.0.0 (beta) on 2026-09-23. Base URL `https://api.jup.ag/trigger/v2`, `x-api-key` header plus `Authorization: Bearer <JWT>`:
 
 ```text
-getAuthChallenge
-exchangeSignedChallenge
-resolveVault
-prepareDeposit
-createPriceOrder
-getOrder
-cancelOrder
+getAuthChallenge         POST /auth/challenge        (type message|transaction; challenge TTL 5 min)
+exchangeSignedChallenge  POST /auth/verify           (base58 signature → JWT, 24h TTL, no refresh)
+resolveVault             GET  /vault                 (404 = none) · GET /vault/register creates a Privy vault
+prepareDeposit           POST /deposit/craft         (orderType "price", orderSubType "single"; UNSIGNED tx + single-use requestId)
+createPriceOrder         POST /orders/price          (depositRequestId + depositSignedTx; lands the deposit; returns { id, txSignature, depositConfirmed })
+getOrder                 GET  /orders/history        (no get-by-id for price orders: page with state/mint filters and match id)
+cancelOrder              POST /orders/price/cancel/{id} → wallet signs withdrawal → POST /orders/price/confirm-cancel/{id}
 ```
+
+Corrections recorded in Task 7 (current docs are authoritative):
+
+- **Custody:** deposits sit in a per-wallet **Privy-managed custodial vault** operated by Jupiter, not a program-derived order account. Circuit still never holds keys or funds, and every deposit and withdrawal is signed by the user's wallet.
+- **Trigger price basis:** Jupiter evaluates `triggerPriceUsd` against the **trigger token's own USD price** (e.g. AAPLx), not Circuit's Pyth reference.
+- **Minimums and bounds:** 10 USD minimum per order. `slippageBps` 0–10000; when omitted, Jupiter's default is RTSE or 2000 bps, so Circuit always sends it. `expiresAt` is required, in milliseconds.
+- **Token-2022:** supported, but deposit mints with transfer-fee or transfer-hook extensions are rejected unless whitelisted. This is assessed per side, because the deposit mint is the policy's input.
+- **Expired orders:** funds stay in the vault and are recovered with the same two-step cancel/withdraw flow.
+- **Cancellation:** step 1 stops fills immediately (`pending_withdraw`). `cancelled` appears only after the signed withdrawal confirms.
+- **States:** `orderState` is `pending | open | executing | filled | pending_withdraw | cancelled | expired | failed`. `pending`, `executing` and `pending_withdraw` are in progress: no Circuit transition.
 
 Use exact current Trigger V2 docs when implementing. Do not invent fields from memory.
 
@@ -809,7 +821,7 @@ Hard rule:
 
 > **Never set ARMED before the provider confirms the order exists.**
 
-Use an application idempotency key. Circuit uses `circuit_arm_<policyId>`: a policy is armed at most once, so the key is fixed per policy. Concurrent or retried arms resume the same ARMING attempt, and the provider returns the same order for the same key.
+Use an application idempotency key. Trigger V2 has no client-supplied request id: provider-side idempotency is the single-use deposit `requestId` (a create retry with the same deposit is idempotent, and reuse after success is rejected as a duplicate deposit). The live adapter must persist the deposit `requestId` against the arm attempt before requesting the wallet signature. Circuit uses `circuit_arm_<policyId>`: a policy is armed at most once, so the key is fixed per policy. Concurrent or retried arms resume the same ARMING attempt, and the provider returns the same order for the same key.
 
 A definitive provider rejection moves ARMING → FAILED. An ambiguous failure (timeout or unavailable) stays ARMING, and a retry with the same key resolves it without creating a second order.
 

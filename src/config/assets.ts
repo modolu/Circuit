@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { comparisonFeedSchema, EXECUTION_STATUSES, primaryReferenceSchema } from "../domain/asset.ts";
+import { comparisonFeedSchema, EXECUTION_STATUSES, jupiterVerificationSchema, primaryReferenceSchema } from "../domain/asset.ts";
 
 /**
  * The curated tokenized-stock catalog (CIRCUIT_ARCHITECTURE.md §27).
@@ -28,6 +28,7 @@ export const verifiedAssetSchema = z.object({
   comparisonFeeds: z.array(comparisonFeedSchema),
   // Execution stays disabled until Jupiter Trigger compatibility is verified (§27 step 4–5).
   execution: z.object({ status: z.enum(EXECUTION_STATUSES) }),
+  jupiter: jupiterVerificationSchema,
   verification: z.object({
     issuerSources: z.array(z.url()).min(1),
     mintSources: z.array(z.string().min(1)).min(1),
@@ -79,6 +80,41 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
       },
     ],
     execution: { status: "PENDING_JUPITER_VERIFICATION" },
+    jupiter: {
+      checkedAt: "2026-09-23T17:00:00Z",
+      docsVersion: "Trigger V2 OpenAPI 2.0.0 (beta), developers.jup.ag docs as of 2026-09-23",
+      levels: {
+        IDENTITY_VERIFIED: { result: "PASSED", detail: "Issuer API (api.backed.fi v1+v2) and Solana mainnet mint account (Task 4)." },
+        JUPITER_TOKEN_RECOGNIZED: {
+          result: "PASSED",
+          detail: "GET /tokens/v2/search exact-mint match: 'Apple xStock' AAPLx, decimals 8 (matches issuer/onchain), Token-2022, isVerified true, tags verified/xstocks/stocks.",
+        },
+        SPOT_ROUTE_VERIFIED: {
+          result: "PASSED",
+          detail: "GET /swap/v2/order quote-only (no taker): 10.5 USDC → AAPLx routed (metis/Whirlpool); AAPLx → USDC routed (jupiterz). Swap routability is not Trigger proof.",
+        },
+        TOKEN_EXTENSIONS_COMPATIBLE: {
+          result: "RESTRICTED",
+          detail: "No transferFeeConfig. transferHook extension present (programId null): Trigger rejects transfer-hook DEPOSIT mints unless whitelisted, so SELL is restricted; BUY deposits USDC and is unaffected per docs.",
+        },
+        TRIGGER_API_ACCESS_VERIFIED: {
+          result: "NOT_TESTED",
+          detail: "JUPITER_API_KEY not configured, so the key's Trigger permission is unknown. POST /trigger/v2/auth/challenge answered 200 on Jupiter's documented keyless tier (endpoint reachable, schema matches).",
+        },
+        TRIGGER_DEPOSIT_CRAFT_VERIFIED: { result: "NOT_TESTED", detail: "Needs a wallet-signed JWT and an existing vault (Task 8)." },
+        LIVE_TRIGGER_ORDER_VERIFIED: { result: "NOT_TESTED", detail: "No funded order has been placed (Task 9)." },
+      },
+      sides: {
+        BUY: {
+          result: "NOT_TESTED",
+          detail: "USDC → AAPLx: deposit mint USDC (classic SPL, no extensions) is outside the documented restriction; route exists. Unproven until deposit craft and a live order succeed.",
+        },
+        SELL: {
+          result: "RESTRICTED",
+          detail: "AAPLx → USDC: deposit mint AAPLx carries transferHook, which is rejected at deposit unless Jupiter whitelists it. Keep SELL disabled until a live deposit craft proves otherwise.",
+        },
+      },
+    },
     verification: {
       issuerSources: ["https://api.backed.fi/api/v2/public/assets", "https://api.backed.fi/api/v1/token"],
       mintSources: [
@@ -100,6 +136,7 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
       "Token-2022 extensions: metadataPointer, permanentDelegate, defaultAccountState, scaledUiAmountConfig, pausableConfig, confidentialTransferMint, transferHook, tokenMetadata.",
       "scaledUiAmountConfig: wallet UI amounts may differ from raw amount ÷ 10^decimals. Money math must use raw atomic units.",
       "Issuer controls (permanent delegate, pausable, freeze authority) exist on this mint.",
+      "ScaledUiAmount multiplier observed 2026-09-23: 1.0026642075893797 → newMultiplier 1.0032690125398187 (effective 1786149000, already active). Jupiter triggers on AAPLx's own USD price, which may differ from Pyth AAPL by this multiplier; quantify with an entitled Pyth key before live orders.",
     ],
   },
 ];

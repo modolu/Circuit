@@ -61,6 +61,9 @@ export default async function NewPolicyPage({ searchParams }: PageProps<"/polici
             referenceSymbol: asset.reference.symbol,
             referenceFeedId: asset.reference.feedId,
             liveReferenceAccess: asset.verification.pythLiveCheck.status,
+            jupiterRoutingVerified:
+              asset.jupiter.levels.JUPITER_TOKEN_RECOGNIZED?.result === "PASSED" &&
+              asset.jupiter.levels.SPOT_ROUTE_VERIFIED?.result === "PASSED",
             executionVerified: asset.execution.status === "VERIFIED",
           }))}
         />

@@ -43,6 +43,7 @@ async function seed(): Promise<void> {
           reference: asset.reference,
           comparisonFeeds: asset.comparisonFeeds,
           execution: asset.execution,
+          jupiter: asset.jupiter,
           tokenProgram: asset.tokenProgram,
           issuerIds: asset.issuerIds,
           verification: asset.verification,

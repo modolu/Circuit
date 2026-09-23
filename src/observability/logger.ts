@@ -27,10 +27,21 @@ const SENSITIVE_KEY_FRAGMENTS = [
 ];
 
 // Exact keys that are secret in Circuit's auth flow. `transactionSignature` stays loggable (onchain evidence).
-const SENSITIVE_EXACT_KEYS = new Set(["signature", "nonce", "session", "set-cookie"]);
+const SENSITIVE_EXACT_KEYS = new Set([
+  "signature",
+  "nonce",
+  "session",
+  "set-cookie",
+  // Jupiter Trigger payloads: signed/unsigned transactions and challenges never go to logs.
+  "transaction",
+  "signedtransaction",
+  "depositsignedtx",
+  "challenge",
+]);
 
 function isSensitiveKey(key: string): boolean {
   if (SENSITIVE_EXACT_KEYS.has(key.toLowerCase())) return true;
+  if (SENSITIVE_EXACT_KEYS.has(key.toLowerCase().replace(/[-_]/g, ""))) return true;
   const normalized = key.toLowerCase().replace(/[-_]/g, "");
   // `accessToken`, `idToken`, `token` are secrets; `tokenMint`, `tokenSymbol` are not.
   if (normalized.endsWith("token")) return true;
