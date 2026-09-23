@@ -38,16 +38,70 @@ export type PolicyStatus = (typeof POLICY_STATUSES)[number];
 /** Statuses that exist only after the provider confirmed an order, so they require `provider_order_id`. */
 export const PROVIDER_BACKED_STATUSES = ["ARMED", "EXECUTED", "EXPIRED"] as const satisfies readonly PolicyStatus[];
 
-export const POLICY_EVENT_SOURCES = ["USER", "CIRCUIT", "JUPITER", "SOLANA", "SYSTEM"] as const;
+/** MOCK_PROVIDER marks simulated-provider events, so they are never mistaken for real JUPITER events. */
+export const POLICY_EVENT_SOURCES = ["USER", "CIRCUIT", "JUPITER", "SOLANA", "SYSTEM", "MOCK_PROVIDER"] as const;
 export type PolicyEventSource = (typeof POLICY_EVENT_SOURCES)[number];
 
 export const POLICY_EVENT_TYPES = {
   CREATED: "POLICY_CREATED",
   REFERENCE_CAPTURED: "REFERENCE_CAPTURED",
   COMPILED: "POLICY_COMPILED",
+  ARMING: "POLICY_ARMING",
+  PROVIDER_ORDER_CREATED: "PROVIDER_ORDER_CREATED",
+  ARMED: "POLICY_ARMED",
+  CANCEL_REQUESTED: "CANCEL_REQUESTED",
+  SIMULATED_FILL_REQUESTED: "SIMULATED_FILL_REQUESTED",
+  PROVIDER_ORDER_FILLED: "PROVIDER_ORDER_FILLED",
+  PROVIDER_ORDER_CANCELLED: "PROVIDER_ORDER_CANCELLED",
+  PROVIDER_ORDER_EXPIRED: "PROVIDER_ORDER_EXPIRED",
+  PROVIDER_ORDER_FAILED: "PROVIDER_ORDER_FAILED",
+  EXECUTED: "POLICY_EXECUTED",
+  CANCELLED: "POLICY_CANCELLED",
+  EXPIRED: "POLICY_EXPIRED",
+  FAILED: "POLICY_FAILED",
 } as const;
 
-export const DEFAULT_EXECUTION_PROVIDER = "jupiter_trigger_v2";
+/** Provider identifiers stored on `policies.provider`. The mock id can never be mistaken for real Jupiter. */
+export const EXECUTION_PROVIDERS = {
+  LIVE: "jupiter_trigger_v2",
+  MOCK: "jupiter_trigger_v2_mock",
+} as const;
+export type ExecutionProviderId = (typeof EXECUTION_PROVIDERS)[keyof typeof EXECUTION_PROVIDERS];
+
+export const DEFAULT_EXECUTION_PROVIDER = EXECUTION_PROVIDERS.LIVE;
+
+export function isSimulatedProvider(provider: string): boolean {
+  return provider === EXECUTION_PROVIDERS.MOCK;
+}
+
+// ---------------------------------------------------------------------------
+// Provider order states → Circuit lifecycle (the single mapping, §14)
+// ---------------------------------------------------------------------------
+
+export const PROVIDER_ORDER_STATES = ["OPEN", "FILLED", "CANCELLED", "EXPIRED", "FAILED"] as const;
+export type ProviderOrderState = (typeof PROVIDER_ORDER_STATES)[number];
+
+const PROVIDER_STATE_TO_POLICY_STATUS: Record<ProviderOrderState, PolicyStatus> = {
+  OPEN: "ARMED",
+  FILLED: "EXECUTED",
+  CANCELLED: "CANCELLED",
+  EXPIRED: "EXPIRED",
+  FAILED: "FAILED",
+};
+
+/** Normalizes a raw provider state. Anything unrecognized is UNKNOWN and must never be guessed at. */
+export function normalizeProviderState(raw: string): ProviderOrderState | "UNKNOWN" {
+  return (PROVIDER_ORDER_STATES as readonly string[]).includes(raw) ? (raw as ProviderOrderState) : "UNKNOWN";
+}
+
+export function policyStatusForProviderState(state: ProviderOrderState): PolicyStatus {
+  return PROVIDER_STATE_TO_POLICY_STATUS[state];
+}
+
+/** The application idempotency key for arming a policy. A policy is armed at most once, so the key is fixed per policy. */
+export function armRequestId(policyId: string): string {
+  return `circuit_arm_${policyId}`;
+}
 
 /** Structural bound only (0–100%). The product's form options are SLIPPAGE_BPS_OPTIONS. */
 export const MAX_SLIPPAGE_BPS_CEILING = 10_000;

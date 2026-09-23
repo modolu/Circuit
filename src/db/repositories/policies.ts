@@ -96,6 +96,7 @@ export type PolicyStateChanges = Partial<
   Pick<
     Policy,
     | "status"
+    | "provider"
     | "providerOrderId"
     | "failureCode"
     | "failureMessage"

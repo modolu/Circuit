@@ -144,6 +144,8 @@ Solana
 = source of truth for final transaction settlement
 ```
 
+Mock mode (`CIRCUIT_JUPITER_MODE=mock`) is hackathon/demo infrastructure. Its simulated provider state (§5.8) stands in for Jupiter only in demos. It is never real Jupiter order truth and never Solana settlement truth, and everything it produces is labelled simulated.
+
 For reference market data:
 
 ```text
@@ -277,7 +279,7 @@ id                  uuid PK
 sequence_number     bigint GENERATED ALWAYS AS IDENTITY
 policy_id           uuid FK policies.id NOT NULL
 event_type          text NOT NULL
-source              enum USER | CIRCUIT | JUPITER | SOLANA | SYSTEM
+source              enum USER | CIRCUIT | JUPITER | SOLANA | SYSTEM | MOCK_PROVIDER
 payload             jsonb NOT NULL
 created_at          timestamptz NOT NULL default clock_timestamp()
 ```
@@ -295,20 +297,28 @@ Ordering: events are read in `(created_at asc, sequence_number asc)` order.
 
 Never rewrite ordinary event history. Append corrections. Database triggers reject `UPDATE`, `DELETE` and `TRUNCATE` on `policy_events`.
 
+`MOCK_PROVIDER` is the source for events reported by the simulated provider, so they are never attributed to `JUPITER`.
+
 ### 5.5 `executions`
 
 ```text
 id                      uuid PK
 policy_id               uuid FK policies.id UNIQUE NOT NULL
 provider_order_id       text NOT NULL
-transaction_signature   text NOT NULL
+evidence_source         enum ONCHAIN | SIMULATED NOT NULL default ONCHAIN
+transaction_signature   text NULL
 input_amount_atomic     numeric(78,0) NOT NULL
-output_amount_atomic    numeric(78,0) NOT NULL
+output_amount_atomic    numeric(78,0) NULL
 effective_price_usd     numeric NULL
 fill_json               jsonb NOT NULL
 executed_at             timestamptz NOT NULL
 created_at              timestamptz NOT NULL
 ```
+
+Evidence provenance, enforced by a CHECK constraint:
+
+- `ONCHAIN`: `transaction_signature` and `output_amount_atomic` are required. Real settlement evidence.
+- `SIMULATED`: both must be NULL. A simulated fill has no Solana transaction and no real output quantity, so Circuit records neither rather than fabricating them. `input_amount_atomic` is the policy's authorized amount, and `fill_json` says `simulated: true`.
 
 If Jupiter exposes multiple partial fills, keep raw detail in `fill_json` for MVP and aggregate into one logical execution record.
 
@@ -336,6 +346,25 @@ Rules:
 - expire aggressively.
 
 This table is reserved for provider (Jupiter) auth. Circuit login does not use it.
+
+### 5.8 `mock_provider_orders` (demo infrastructure)
+
+Durable state of the simulated execution provider, used only when `CIRCUIT_JUPITER_MODE=mock`. It stands in for the provider's own order records, so simulated orders survive reloads, browser closure and serverless restarts. It is never read as real Jupiter or Solana state, and it is removable once live execution is the only supported mode.
+
+```text
+id                  uuid PK
+provider_order_id   text UNIQUE NOT NULL   -- always mock_<32 hex> (CHECK)
+client_request_id   text UNIQUE NOT NULL   -- the arm idempotency key
+policy_id           uuid FK policies.id UNIQUE NOT NULL
+state               enum OPEN | FILLED | CANCELLED | EXPIRED | FAILED
+expires_at          timestamptz NOT NULL
+filled_at           timestamptz NULL
+cancelled_at        timestamptz NULL
+created_at          timestamptz NOT NULL
+updated_at          timestamptz NOT NULL
+```
+
+Only the mock provider reads or writes this table. It never touches `policies`.
 
 ### 5.7 `auth_nonces`
 
@@ -400,6 +429,7 @@ No new top-level directory without editing this file.
 │       ├── policies/[policyId]/arm/route.ts
 │       ├── policies/[policyId]/cancel/route.ts
 │       ├── policies/[policyId]/reconcile/route.ts
+│       ├── policies/[policyId]/mock/simulate-fill/route.ts   (mock mode only; NOT_FOUND in live)
 │       ├── auth/nonce/route.ts
 │       ├── auth/verify/route.ts
 │       ├── auth/logout/route.ts
@@ -431,7 +461,9 @@ No new top-level directory without editing this file.
 │   │   ├── reconcile-policy.ts
 │   │   ├── get-reference.ts
 │   │   ├── list-assets.ts
-│   │   └── policy-view.ts
+│   │   ├── policy-view.ts
+│   │   ├── policy-lifecycle.ts
+│   │   └── simulate-provider-fill.ts   (mock mode only)
 │   │
 │   ├── integrations/
 │   │   ├── pyth/
@@ -442,7 +474,10 @@ No new top-level directory without editing this file.
 │   │       ├── client.ts
 │   │       ├── auth.ts
 │   │       ├── trigger.ts
-│   │       └── types.ts
+│   │       ├── types.ts      (Circuit-owned provider contract)
+│   │       ├── provider.ts   (mode → provider; never live→mock fallback)
+│   │       ├── live.ts       (refuses until the Trigger V2 adapter exists)
+│   │       └── mock.ts       (simulated provider, demo only)
 │   │
 │   ├── db/
 │   │   ├── client.ts
@@ -452,7 +487,8 @@ No new top-level directory without editing this file.
 │   │   │   ├── wallets.ts
 │   │   │   ├── policies.ts
 │   │   │   ├── executions.ts
-│   │   │   └── auth-nonces.ts
+│   │   │   ├── auth-nonces.ts
+│   │   │   └── mock-provider-orders.ts
 │   │   └── migrations/
 │   │
 │   ├── auth/
@@ -707,6 +743,23 @@ Use exact current Trigger V2 docs when implementing. Do not invent fields from m
 
 Jupiter owns keeper execution. Circuit owns user policy, reference context, and local audit state.
 
+**Provider contract** (`src/integrations/jupiter/types.ts`): Circuit-owned DTOs, not Jupiter wire types.
+
+```text
+createOrder(clientRequestId, mints, inputAmountAtomic, triggerUsd, triggerCondition, slippageBps, expiresAt)
+getOrder(providerOrderId)
+cancelOrder(providerOrderId)
+```
+
+Provider states are normalized to `OPEN | FILLED | CANCELLED | EXPIRED | FAILED`, and mapped in one place (`src/domain/policy.ts`) to `ARMED | EXECUTED | CANCELLED | EXPIRED | FAILED`. Unknown states are logged and never guessed at.
+
+**Modes:**
+
+- `mock` → the simulated provider (`jupiter_trigger_v2_mock`).
+- `live` → the Jupiter adapter. Until that exists, live mode refuses every operation with `PROVIDER_UNAVAILABLE`.
+- Live mode **never falls back to the mock**.
+- A policy is only ever managed by the provider that armed it (`policies.provider`).
+
 ---
 
 ## 12. Key flow — create draft
@@ -756,7 +809,9 @@ Hard rule:
 
 > **Never set ARMED before the provider confirms the order exists.**
 
-Use an application idempotency key.
+Use an application idempotency key. Circuit uses `circuit_arm_<policyId>`: a policy is armed at most once, so the key is fixed per policy. Concurrent or retried arms resume the same ARMING attempt, and the provider returns the same order for the same key.
+
+A definitive provider rejection moves ARMING → FAILED. An ambiguous failure (timeout or unavailable) stays ARMING, and a retry with the same key resolves it without creating a second order.
 
 If provider succeeds and DB write fails, recovery must use provider idempotency/client request ID if supported.
 

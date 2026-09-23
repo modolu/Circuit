@@ -3,10 +3,11 @@ import { z } from "zod";
 import { USDC } from "../config/tokens.ts";
 import type { DbExecutor } from "../db/client.ts";
 import { findAssetById } from "../db/repositories/assets.ts";
+import { findExecutionByPolicyId } from "../db/repositories/executions.ts";
 import { findPolicyForWallet, listPoliciesForWallet, listPolicyEvents } from "../db/repositories/policies.ts";
-import type { Policy, PolicyEvent } from "../db/schema.ts";
+import type { Execution, Policy, PolicyEvent } from "../db/schema.ts";
 import { fromAtomicUnits } from "../domain/money.ts";
-import { describePolicy, type PolicyStatus } from "../domain/policy.ts";
+import { describePolicy, isSimulatedProvider, type PolicyStatus } from "../domain/policy.ts";
 
 /* Client-safe policy views. Every read is scoped to the owning wallet. */
 
@@ -44,6 +45,35 @@ export interface PolicyView {
   createdAt: string;
   reference: z.infer<typeof snapshotSchema> | null;
   summary: string;
+  provider: string;
+  /** True when a simulated (mock) provider armed this policy. Its evidence is never onchain. */
+  simulated: boolean;
+  providerOrderId: string | null;
+  armedAt: string | null;
+  executedAt: string | null;
+  cancelledAt: string | null;
+  failure: { code: string; message: string | null } | null;
+}
+
+export interface ExecutionView {
+  evidenceSource: Execution["evidenceSource"];
+  providerOrderId: string;
+  /** Null for simulated fills: there is no Solana transaction. */
+  transactionSignature: string | null;
+  inputAmountAtomic: string;
+  outputAmountAtomic: string | null;
+  executedAt: string;
+}
+
+export function toExecutionView(execution: Execution): ExecutionView {
+  return {
+    evidenceSource: execution.evidenceSource,
+    providerOrderId: execution.providerOrderId,
+    transactionSignature: execution.transactionSignature,
+    inputAmountAtomic: execution.inputAmountAtomic.toString(),
+    outputAmountAtomic: execution.outputAmountAtomic?.toString() ?? null,
+    executedAt: execution.executedAt.toISOString(),
+  };
 }
 
 export interface PolicyEventView {
@@ -75,6 +105,13 @@ export function toPolicyView(policy: Policy, asset: PolicyAssetSummary): PolicyV
     expiresAt: policy.expiresAt.toISOString(),
     createdAt: policy.createdAt.toISOString(),
     reference: snapshot.success ? snapshot.data : null,
+    provider: policy.provider,
+    simulated: isSimulatedProvider(policy.provider),
+    providerOrderId: policy.providerOrderId,
+    armedAt: policy.armedAt?.toISOString() ?? null,
+    executedAt: policy.executedAt?.toISOString() ?? null,
+    cancelledAt: policy.cancelledAt?.toISOString() ?? null,
+    failure: policy.failureCode ? { code: policy.failureCode, message: policy.failureMessage } : null,
     summary: describePolicy({
       side: policy.side,
       direction: policy.triggerDirection,
@@ -118,13 +155,25 @@ async function assetSummary(db: DbExecutor, assetId: string): Promise<PolicyAsse
 export async function getPolicyViewForWallet(
   db: DbExecutor,
   { walletId, policyId }: { walletId: string; policyId: string },
-): Promise<{ policy: PolicyView; events: PolicyEventView[] } | null> {
+): Promise<{ policy: PolicyView; events: PolicyEventView[]; execution: ExecutionView | null } | null> {
   const policy = await findPolicyForWallet(db, { policyId, walletId });
   if (!policy) return null;
   const asset = await assetSummary(db, policy.assetId);
   if (!asset) return null;
   const events = await listPolicyEvents(db, policy.id);
-  return { policy: toPolicyView(policy, asset), events: events.map(toPolicyEventView) };
+  const execution = await findExecutionByPolicyId(db, policy.id);
+  return {
+    policy: toPolicyView(policy, asset),
+    events: events.map(toPolicyEventView),
+    execution: execution ? toExecutionView(execution) : null,
+  };
+}
+
+/** The view for a policy row that a lifecycle service has already scoped to the wallet. */
+export async function policyViewFor(db: DbExecutor, policy: Policy): Promise<PolicyView> {
+  const asset = await assetSummary(db, policy.assetId);
+  if (!asset) throw new Error("policy asset missing");
+  return toPolicyView(policy, asset);
 }
 
 export async function listPolicyViewsForWallet(db: DbExecutor, walletId: string, limit = 20): Promise<PolicyView[]> {

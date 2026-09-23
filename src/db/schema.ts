@@ -22,6 +22,7 @@ import {
   POLICY_SIDES,
   POLICY_STATUSES,
   PROVIDER_BACKED_STATUSES,
+  PROVIDER_ORDER_STATES,
   SOURCE_EXPRESSION_TYPES,
   TRIGGER_DIRECTIONS,
 } from "../domain/policy.ts";
@@ -42,6 +43,8 @@ export const triggerDirection = pgEnum("trigger_direction", TRIGGER_DIRECTIONS);
 export const sourceExpressionType = pgEnum("source_expression_type", SOURCE_EXPRESSION_TYPES);
 export const policyStatus = pgEnum("policy_status", POLICY_STATUSES);
 export const policyEventSource = pgEnum("policy_event_source", POLICY_EVENT_SOURCES);
+export const executionEvidenceSource = pgEnum("execution_evidence_source", ["ONCHAIN", "SIMULATED"]);
+export const mockProviderOrderState = pgEnum("mock_provider_order_state", PROVIDER_ORDER_STATES);
 
 export const wallets = pgTable("wallets", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -170,9 +173,14 @@ export const executions = pgTable(
       .unique()
       .references(() => policies.id),
     providerOrderId: text("provider_order_id").notNull(),
-    transactionSignature: text("transaction_signature").notNull(),
+    /**
+     * ONCHAIN: real settlement; signature and output amount are required.
+     * SIMULATED: mock provider fill; there is no Solana transaction, so both must be null.
+     */
+    evidenceSource: executionEvidenceSource("evidence_source").notNull().default("ONCHAIN"),
+    transactionSignature: text("transaction_signature"),
     inputAmountAtomic: atomicAmount("input_amount_atomic").notNull(),
-    outputAmountAtomic: atomicAmount("output_amount_atomic").notNull(),
+    outputAmountAtomic: atomicAmount("output_amount_atomic"),
     effectivePriceUsd: usdDecimal("effective_price_usd"),
     fillJson: jsonb("fill_json").$type<Record<string, unknown>>().notNull(),
     executedAt: timestamptz("executed_at").notNull(),
@@ -181,7 +189,41 @@ export const executions = pgTable(
   (t) => [
     check("executions_input_amount_non_negative", sql`${t.inputAmountAtomic} >= 0`),
     check("executions_output_amount_non_negative", sql`${t.outputAmountAtomic} >= 0`),
+    check(
+      "executions_evidence_matches_source",
+      sql`(${t.evidenceSource} = 'ONCHAIN' AND ${t.transactionSignature} IS NOT NULL AND ${t.outputAmountAtomic} IS NOT NULL)
+        OR (${t.evidenceSource} = 'SIMULATED' AND ${t.transactionSignature} IS NULL AND ${t.outputAmountAtomic} IS NULL)`,
+    ),
   ],
+);
+
+/**
+ * HACKATHON/DEMO INFRASTRUCTURE (CIRCUIT_ARCHITECTURE.md §5.8). The durable state
+ * of the simulated execution provider, used only when CIRCUIT_JUPITER_MODE=mock.
+ * It stands in for Jupiter's own records and is never real Jupiter or Solana state.
+ * Removable once live execution is the only supported mode.
+ */
+export const mockProviderOrders = pgTable(
+  "mock_provider_orders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    providerOrderId: text("provider_order_id").notNull().unique(),
+    clientRequestId: text("client_request_id").notNull().unique(),
+    policyId: uuid("policy_id")
+      .notNull()
+      .unique()
+      .references(() => policies.id),
+    state: mockProviderOrderState("state").notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+    filledAt: timestamptz("filled_at"),
+    cancelledAt: timestamptz("cancelled_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [check("mock_provider_orders_id_prefix", sql`left(${t.providerOrderId}, 5) = 'mock_'`)],
 );
 
 /** Single-use Circuit login challenges (CIRCUIT_ARCHITECTURE.md §5.7). Stores a hash, never the raw nonce. */
@@ -215,3 +257,4 @@ export type Execution = typeof executions.$inferSelect;
 export type NewExecution = typeof executions.$inferInsert;
 export type AuthNonce = typeof authNonces.$inferSelect;
 export type NewAuthNonce = typeof authNonces.$inferInsert;
+export type MockProviderOrder = typeof mockProviderOrders.$inferSelect;

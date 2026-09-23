@@ -25,11 +25,13 @@ export function PolicyList({ policies }: { policies: PolicyView[] }) {
                 {formatUsd(policy.compiledTriggerUsd)}
                 <span className="mt-0.5 block text-[11px] text-muted">
                   {policy.amount.display} {policy.amount.symbol} · expires {formatUtc(policy.expiresAt)}
+                  {policy.simulated ? " · simulated provider" : ""}
                 </span>
               </span>
-              <StatusChip tone={POLICY_STATUS_TONE[policy.status]} className="justify-self-start sm:justify-self-end">
-                {policy.status}
-              </StatusChip>
+              <span className="flex gap-2 justify-self-start sm:justify-self-end">
+                {policy.simulated && <StatusChip tone="info">SIMULATED</StatusChip>}
+                <StatusChip tone={POLICY_STATUS_TONE[policy.status]}>{policy.status}</StatusChip>
+              </span>
             </Link>
           </li>
         ))}

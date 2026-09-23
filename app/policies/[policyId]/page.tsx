@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { formatSession, formatUtc } from "@/components/asset/format";
-import { Button } from "@/components/ui/button";
+import { PolicyActions } from "@/components/policy/policy-actions";
 import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { POLICY_STATUS_TONE, StatusChip } from "@/components/ui/status-chip";
@@ -12,7 +12,11 @@ import { getAuthenticatedWallet } from "@/src/auth/current-wallet";
 import { getDb } from "@/src/db/client";
 import { formatUsd } from "@/src/domain/money";
 import { describeSlippage } from "@/src/domain/policy";
+import { toAppError } from "@/src/domain/errors";
+import { getExecutionMode, getExecutionProvider } from "@/src/integrations/jupiter/provider";
+import { logger } from "@/src/observability/logger";
 import { getPolicyViewForWallet } from "@/src/services/policy-view";
+import { reconcilePolicy } from "@/src/services/reconcile-policy";
 
 export const metadata: Metadata = { title: "Policy" };
 
@@ -20,7 +24,22 @@ const EVENT_LABELS: Record<string, string> = {
   POLICY_CREATED: "Policy drafted",
   REFERENCE_CAPTURED: "Pyth reference captured",
   POLICY_COMPILED: "Policy compiled",
+  POLICY_ARMING: "Arming started",
+  PROVIDER_ORDER_CREATED: "Provider confirmed order",
+  POLICY_ARMED: "Policy ARMED",
+  CANCEL_REQUESTED: "Cancellation requested",
+  SIMULATED_FILL_REQUESTED: "Simulated fill requested (demo control)",
+  PROVIDER_ORDER_FILLED: "Provider reported FILLED",
+  PROVIDER_ORDER_CANCELLED: "Provider confirmed cancellation",
+  PROVIDER_ORDER_EXPIRED: "Provider reported expiry",
+  PROVIDER_ORDER_FAILED: "Provider reported failure",
+  POLICY_EXECUTED: "Policy EXECUTED",
+  POLICY_CANCELLED: "Policy CANCELLED",
+  POLICY_EXPIRED: "Policy EXPIRED",
+  POLICY_FAILED: "Policy FAILED",
 };
+
+const SOURCE_LABELS: Record<string, string> = { MOCK_PROVIDER: "MOCK PROVIDER" };
 
 function Row({ term, children, sub }: { term: string; children: React.ReactNode; sub?: React.ReactNode }) {
   return (
@@ -52,10 +71,22 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
     );
   }
 
+  const mode = getExecutionMode();
   // Ownership is enforced in the query: a policy owned by another wallet is simply not found.
-  const result = await getPolicyViewForWallet(db, { walletId: wallet.id, policyId });
+  let result = await getPolicyViewForWallet(db, { walletId: wallet.id, policyId });
   if (!result) notFound();
-  const { policy, events } = result;
+
+  // Reconcile armed policies on page load (CIRCUIT_ARCHITECTURE.md §14), only with the provider that armed them.
+  if (result.policy.status === "ARMED" && result.policy.simulated === (mode === "mock")) {
+    try {
+      const reconciled = await reconcilePolicy(db, { wallet, policyId }, { provider: getExecutionProvider(db, mode) });
+      if (reconciled.changed) result = (await getPolicyViewForWallet(db, { walletId: wallet.id, policyId })) ?? result;
+    } catch (error) {
+      const appError = toAppError(error);
+      logger.warn("reconcile.page_load_failed", { policyId, code: appError.code });
+    }
+  }
+  const { policy, events, execution } = result;
   const relative = policy.expressionType === "RELATIVE_PERCENT";
 
   return (
@@ -67,7 +98,10 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
               {policy.side === "BUY" ? "Buy" : "Sell"} {policy.triggerDirection === "BELOW" ? "below" : "above"} ·{" "}
               {policy.asset.symbol}
             </h1>
-            <StatusChip tone={POLICY_STATUS_TONE[policy.status]}>{policy.status}</StatusChip>
+            <span data-testid="policy-status">
+              <StatusChip tone={POLICY_STATUS_TONE[policy.status]}>{policy.status}</StatusChip>
+            </span>
+            {policy.simulated && <StatusChip tone="info">SIMULATED</StatusChip>}
           </div>
           <p className="mt-1.5 font-mono text-xs text-muted">policy {policy.id}</p>
         </div>
@@ -96,6 +130,8 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
               <Row term="Input mint">{shortAddress(policy.inputMint)}</Row>
               <Row term="Output mint">{shortAddress(policy.outputMint)}</Row>
               <Row term="Created">{formatUtc(policy.createdAt, true)}</Row>
+              {policy.armedAt && <Row term="Armed">{formatUtc(policy.armedAt, true)}</Row>}
+              {policy.failure && <Row term="Failure" sub={policy.failure.message ?? undefined}>{policy.failure.code}</Row>}
             </dl>
           </Card>
 
@@ -111,7 +147,9 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
                   </span>
                   <span>
                     <span className="text-[13px] font-medium">{EVENT_LABELS[event.eventType] ?? event.eventType}</span>
-                    <span className="ml-2 font-mono text-[10px] tracking-[0.06em] text-muted">{event.source}</span>
+                    <span className="ml-2 font-mono text-[10px] tracking-[0.06em] text-muted">
+                      {SOURCE_LABELS[event.source] ?? event.source}
+                    </span>
                   </span>
                 </li>
               ))}
@@ -142,16 +180,39 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
           </Card>
 
           <Card as="section" aria-label="Execution" className="p-5">
-            <SectionLabel>Execution</SectionLabel>
-            <p className="mt-2 text-[13px] leading-relaxed text-muted">
-              This draft has not been sent anywhere. Arming creates a Jupiter Trigger order after you review and sign.
-            </p>
-            <Button variant="primary" size="lg" disabled className="mt-4 w-full" aria-describedby="arm-note">
-              Authorize &amp; arm policy
-            </Button>
-            <p id="arm-note" className="mt-2 text-center text-xs text-muted">
-              Jupiter verification comes next.
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <SectionLabel>Execution</SectionLabel>
+              {policy.simulated && <StatusChip tone="info">SIMULATED</StatusChip>}
+            </div>
+            <dl className="mt-2">
+              <Row term="Provider" sub={policy.simulated ? "Mock provider · demo execution" : undefined}>
+                {policy.status === "DRAFT" ? (mode === "mock" ? "Simulated Jupiter" : "Jupiter Trigger") : policy.simulated ? "Simulated Jupiter" : "Jupiter Trigger"}
+              </Row>
+              {policy.providerOrderId && (
+                <Row term={policy.simulated ? "Simulated order id" : "Order id"}>
+                  <span data-testid="provider-order-id" title={policy.providerOrderId}>
+                    {policy.providerOrderId.slice(0, 13)}…
+                  </span>
+                </Row>
+              )}
+            </dl>
+
+            {policy.status === "EXECUTED" && execution?.evidenceSource === "SIMULATED" && (
+              <p data-testid="simulated-evidence" className="mt-3 rounded-md border border-dashed border-line-strong p-3 text-xs leading-relaxed text-muted">
+                The simulated provider reported this order FILLED at {formatUtc(execution.executedAt, true)}. No Solana
+                transaction evidence exists for this simulated fill, and no funds moved.
+              </p>
+            )}
+            {policy.status === "CANCELLED" && (
+              <p className="mt-3 text-xs text-muted">Cancellation confirmed by the {policy.simulated ? "simulated " : ""}provider.</p>
+            )}
+            {policy.status === "EXPIRED" && (
+              <p className="mt-3 text-xs text-muted">The {policy.simulated ? "simulated " : ""}order expired without filling.</p>
+            )}
+
+            <div className="mt-4">
+              <PolicyActions policyId={policy.id} status={policy.status} mode={mode} simulated={policy.simulated} />
+            </div>
           </Card>
         </div>
       </div>

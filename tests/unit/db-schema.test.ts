@@ -7,7 +7,7 @@ import { POLICY_EVENT_SOURCES, POLICY_STATUSES } from "@/src/domain/policy";
 describe("schema matches CIRCUIT_ARCHITECTURE.md", () => {
   it("defines exactly the architecture's policy statuses and event sources", () => {
     expect(POLICY_STATUSES).toEqual(["DRAFT", "ARMING", "ARMED", "EXECUTED", "CANCELLED", "EXPIRED", "FAILED"]);
-    expect(POLICY_EVENT_SOURCES).toEqual(["USER", "CIRCUIT", "JUPITER", "SOLANA", "SYSTEM"]);
+    expect(POLICY_EVENT_SOURCES).toEqual(["USER", "CIRCUIT", "JUPITER", "SOLANA", "SYSTEM", "MOCK_PROVIDER"]);
     expect(policyStatus.enumValues).toEqual(POLICY_STATUSES);
     expect(policyEventSource.enumValues).toEqual(POLICY_EVENT_SOURCES);
   });

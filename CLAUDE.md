@@ -252,6 +252,24 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
 - In mock mode, every execution surface is visibly labelled **SIMULATED / Demo execution**. Mock order IDs, fills, and evidence are **never** presented as real Solana or Jupiter evidence, whether in the UI, README, screenshots, pitch, or submission.
 - Mode switching never migrates records: a mock-armed policy is never reconciled against live Jupiter, and the reverse is also true.
 
+**Implemented (Task 6):**
+- **Provider contract** is `ExecutionProvider` (`src/integrations/jupiter/types.ts`): `createOrder`/`getOrder`/`cancelOrder` with Circuit-owned DTOs and no Jupiter wire fields. `getExecutionProvider(db)` chooses by mode. **`live` never falls back to `mock`:** until the adapter exists it refuses (`PROVIDER_UNAVAILABLE`) before any state change, and mock-only routes return NOT_FOUND.
+- **Mock provider** (`mock.ts`) keeps durable state in `mock_provider_orders` (Arch §5.8, demo infrastructure only).
+  - Order ids are `mock_<32 hex>`, enforced by a CHECK.
+  - Open orders expire on read once past `expires_at`.
+- **Provenance:**
+  - Simulated policies store `provider = jupiter_trigger_v2_mock`.
+  - Simulated provider events use the `MOCK_PROVIDER` event source, never `JUPITER`.
+  - Simulated fills create an `executions` row with `evidence_source = SIMULATED` and NULL `transaction_signature`/`output_amount_atomic`, enforced by a CHECK. Never fabricate a signature, output quantity or explorer link.
+- **Lifecycle services:** `arm-policy`, `reconcile-policy`, `cancel-policy`, and `simulate-provider-fill` (mock only). All use the owned-policy lookup, and all go through `policy-lifecycle.ts`, the single place that applies a terminal provider state: a compare-and-set from ARMED, events, and a simulated execution.
+- **Arm:**
+  - The idempotency key is `circuit_arm_<policyId>`, and the row is locked during DRAFT → ARMING.
+  - ARMED is set only after `createOrder` returns.
+  - A definitive rejection → FAILED. An ambiguous failure stays ARMING, and a retry resumes with the same key.
+- **Cancel:** records CANCELLED only on provider confirmation. If the provider already FILLED/EXPIRED/FAILED, that state wins (outcome `ALREADY_FILLED`, etc.).
+- **Demo control:** `POST /api/policies/[id]/mock/simulate-fill` changes *mock provider* state only. Circuit becomes EXECUTED only through reconciliation (the Reconcile button, or page load).
+- **UI:** DRAFT in mock mode shows "Arm simulated order" with a SIMULATED badge and the no-funds explanation. In live mode the arm button is disabled with "Live Jupiter execution is not configured yet." Stable `data-testid`s (`policy-status`, `arm-simulated`, `simulate-fill`, `reconcile`, `cancel-simulated`, `provider-order-id`, `simulated-evidence`) are ready for the Playwright flow.
+
 ## 12. Provider integration boundaries
 
 **Pyth (`src/integrations/pyth/`, `src/services/get-reference.ts`)**
@@ -401,6 +419,7 @@ Demo-ready means **all** of the following hold on the deployed Vercel URL. `live
 | Background sync | Vercel Cron once per minute (Arch §2, §25) | Reconcile on page load, manual refresh, and after cancel. Cron route kept for manual/daily backstop only. | Vercel Hobby cannot be assumed to support minute-level cron. Free-tier constraint. |
 | Jupiter mode switch | Not specified | `CIRCUIT_JUPITER_MODE=mock\|live` env var plus a mock adapter. A deployed build may run mock if clearly labelled SIMULATED (§11). | Enables e2e, local dev, and an honest demo without mainnet funds. Needs a matching update to Arch §19 when implemented. |
 | `JUPITER_API_KEY` | Listed as required | Required only in `live` mode | Mock mode must run without provider credentials. |
+| Simulated execution | Not specified | `mock_provider_orders` table; `MOCK_PROVIDER` event source; `executions.evidence_source` with nullable signature/output for SIMULATED rows | Durable demo lifecycle without conflating mock state with Circuit state or fabricating Solana evidence. Documented in Arch §5.4, §5.5, §5.8 and §11. |
 | `policy_events` columns | id, policy_id, event_type, source, payload, created_at | Adds `sequence_number` (bigint identity). `created_at` defaults to `clock_timestamp()`. Events are ordered by (created_at, sequence_number). | Several events written in one transaction can share a timestamp, so the audit trail needs a database-assigned tie-breaker to keep insertion order. |
 | Policy checks | Constraints listed in Arch §5.3 | Also: `max_slippage_bps` between 0 and 10000 (structural bound only), non-negative execution amounts, `decimals` 0–255 | Cheap structural guards. The product's allowed slippage range is still decided in Milestone 3. |
 
