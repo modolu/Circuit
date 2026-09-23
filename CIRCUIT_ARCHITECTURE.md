@@ -371,6 +371,10 @@ No new top-level directory without editing this file.
 │   ├── asset/
 │   └── ui/
 │
+├── design/
+│   ├── circuit_mockup.html
+│   └── circuit_mockup_alt.html
+│
 ├── src/
 │   ├── domain/
 │   │   ├── policy.ts
@@ -463,6 +467,12 @@ No new top-level directory without editing this file.
 `components/**`
 - presentation/browser interaction;
 - no server secrets.
+
+`design/**`
+- non-runtime visual reference prototypes only;
+- not application code and not product data;
+- illustrative prices, mints, balances, fills, signatures and other values inside are mock design content only;
+- runtime code must never import, read, or treat values in `design/` as real market or provider data.
 
 ---
 
