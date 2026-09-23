@@ -45,6 +45,12 @@ export const policyStatus = pgEnum("policy_status", POLICY_STATUSES);
 export const policyEventSource = pgEnum("policy_event_source", POLICY_EVENT_SOURCES);
 export const executionEvidenceSource = pgEnum("execution_evidence_source", ["ONCHAIN", "SIMULATED"]);
 export const mockProviderOrderState = pgEnum("mock_provider_order_state", PROVIDER_ORDER_STATES);
+export const jupiterDepositPreparationStatus = pgEnum("jupiter_deposit_preparation_status", [
+  "PREPARING",
+  "CRAFTED",
+  "CONSUMED",
+  "INVALIDATED",
+]);
 
 export const wallets = pgTable("wallets", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -258,3 +264,50 @@ export type NewExecution = typeof executions.$inferInsert;
 export type AuthNonce = typeof authNonces.$inferSelect;
 export type NewAuthNonce = typeof authNonces.$inferInsert;
 export type MockProviderOrder = typeof mockProviderOrders.$inferSelect;
+
+/**
+ * Pre-signing Jupiter Trigger deposit state (CIRCUIT_ARCHITECTURE.md §5.9), live mode only.
+ * - PREPARING: a reservation made before calling /deposit/craft (no DB transaction is held over HTTP).
+ * - CRAFTED: Jupiter's single-use deposit requestId and the UNSIGNED transaction, committed
+ *   before the transaction is ever returned for signing.
+ * - CONSUMED: the requestId was used by order creation (Task 9).
+ * - INVALIDATED: released (craft failed, stale reservation, or an unusable transaction).
+ * Never stores signatures, signed transactions or private keys.
+ */
+export const jupiterDepositPreparations = pgTable(
+  "jupiter_deposit_preparations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id),
+    walletId: uuid("wallet_id")
+      .notNull()
+      .references(() => wallets.id),
+    status: jupiterDepositPreparationStatus("status").notNull(),
+    depositRequestId: text("deposit_request_id").unique(),
+    /** Base64 UNSIGNED provider transaction exactly as Jupiter returned it. */
+    unsignedTransaction: text("unsigned_transaction"),
+    receiverAddress: text("receiver_address"),
+    inputMint: text("input_mint").notNull(),
+    outputMint: text("output_mint").notNull(),
+    inputAmountAtomic: atomicAmount("input_amount_atomic").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("jupiter_deposit_preparations_one_active_per_policy")
+      .on(t.policyId)
+      .where(sql`${t.status} IN ('PREPARING', 'CRAFTED')`),
+    check("jupiter_deposit_preparations_amount_positive", sql`${t.inputAmountAtomic} > 0`),
+    check(
+      "jupiter_deposit_preparations_crafted_has_request",
+      sql`${t.status} NOT IN ('CRAFTED', 'CONSUMED') OR (${t.depositRequestId} IS NOT NULL AND ${t.unsignedTransaction} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export type JupiterDepositPreparation = typeof jupiterDepositPreparations.$inferSelect;

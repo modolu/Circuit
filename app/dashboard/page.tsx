@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AssetReferenceCard, type ReferenceState } from "@/components/asset/asset-reference-card";
 import { formatUsd } from "@/components/asset/format";
+import { JupiterConnection } from "@/components/jupiter/jupiter-connection";
 import { PolicyList } from "@/components/policy/policy-list";
 import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,6 +15,7 @@ import { getSession } from "@/src/auth/session";
 import { getDb } from "@/src/db/client";
 import type { PublicAsset } from "@/src/domain/asset";
 import { toAppError } from "@/src/domain/errors";
+import { getExecutionMode } from "@/src/integrations/jupiter/provider";
 import { getPythClient } from "@/src/integrations/pyth/client";
 import { logger } from "@/src/observability/logger";
 import { getAssetReference } from "@/src/services/get-reference";
@@ -127,6 +129,8 @@ export default async function DashboardPage() {
       logger.error("dashboard.policies_failed", { error: error instanceof Error ? error : undefined });
     }
   }
+  // Live Jupiter UI only in live mode; mock mode is unchanged and never falls back.
+  const liveJupiter = wallet !== null && getExecutionMode() === "live";
   const firstReference =
     catalog?.status === "loaded"
       ? catalog.entries.find((entry) => entry.state.status === "available")
@@ -179,6 +183,12 @@ export default async function DashboardPage() {
           <WalletSignInPanel sessionWallet={wallet} size="md" className="mt-6" />
         </Card>
       ) : null}
+
+      {liveJupiter && wallet && (
+        <div className="mt-12">
+          <JupiterConnection sessionWallet={wallet} />
+        </div>
+      )}
 
       {catalog && (
         <section aria-labelledby="reference-heading" className="mt-12">

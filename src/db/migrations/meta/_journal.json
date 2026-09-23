@@ -29,6 +29,13 @@
       "when": 1790183756090,
       "tag": "0003_simulated_execution",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790199409562,
+      "tag": "0004_jupiter_deposit_preparations",
+      "breakpoints": true
     }
   ]
 }

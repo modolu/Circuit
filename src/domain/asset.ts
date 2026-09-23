@@ -62,11 +62,47 @@ export const jupiterVerificationSchema = z.object({
 });
 export type JupiterVerification = z.infer<typeof jupiterVerificationSchema>;
 
+/**
+ * Circuit compiles triggers from the Pyth UNDERLYING price (e.g. AAPL), but Jupiter
+ * evaluates them on the TOKEN's USD price (e.g. AAPLx, which has a ScaledUiAmount
+ * multiplier). Live orders stay blocked until this relationship is deliberately
+ * calibrated: no guessed conversion.
+ */
+export const executionPriceCalibrationSchema = z.object({
+  status: z.enum(["REQUIRED", "CALIBRATED"]),
+  detail: z.string().min(1),
+});
+
 export const assetMetadataSchema = z.object({
   reference: primaryReferenceSchema,
   comparisonFeeds: z.array(comparisonFeedSchema).default([]),
   execution: z.object({ status: z.enum(EXECUTION_STATUSES) }),
+  // Live-execution evidence. Missing or malformed evidence reads as "not verified" (the
+  // live gate fails closed) and never breaks reference reads that don't need it.
+  jupiter: jupiterVerificationSchema.optional().catch(undefined),
+  executionPriceCalibration: executionPriceCalibrationSchema.optional().catch(undefined),
+  verification: z
+    .object({ pythLiveCheck: z.object({ status: z.string() }).optional().catch(undefined) })
+    .optional()
+    .catch(undefined),
 });
+
+export type LiveBuyGateFailure =
+  | "PYTH_LIVE_CHECK_REQUIRED"
+  | "BUY_DEPOSIT_NOT_COMPATIBLE"
+  | "EXECUTION_PRICE_CALIBRATION_REQUIRED";
+
+/** Whether an asset may have a live Jupiter BUY deposit prepared. Missing evidence means no. */
+export function liveBuyDepositGate(metadata: AssetMetadata): { ok: true } | { ok: false; reason: LiveBuyGateFailure } {
+  if (metadata.verification?.pythLiveCheck?.status !== "PASSED") return { ok: false, reason: "PYTH_LIVE_CHECK_REQUIRED" };
+  if (!metadata.jupiter || metadata.jupiter.sides.BUY.result === "RESTRICTED" || metadata.jupiter.sides.BUY.result === "FAILED") {
+    return { ok: false, reason: "BUY_DEPOSIT_NOT_COMPATIBLE" };
+  }
+  if (metadata.executionPriceCalibration?.status !== "CALIBRATED") {
+    return { ok: false, reason: "EXECUTION_PRICE_CALIBRATION_REQUIRED" };
+  }
+  return { ok: true };
+}
 
 export type PrimaryReference = z.infer<typeof primaryReferenceSchema>;
 export type AssetMetadata = z.infer<typeof assetMetadataSchema>;

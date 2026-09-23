@@ -19,7 +19,7 @@ export {
  */
 
 /** Secure everywhere except plain-HTTP localhost development, where browsers would drop it. */
-function isSecureCookieContext(): boolean {
+export function isSecureCookieContext(): boolean {
   const appUrl = new URL(getPublicEnv().NEXT_PUBLIC_APP_URL);
   const isLocalHttp = appUrl.protocol === "http:" && ["localhost", "127.0.0.1"].includes(appUrl.hostname);
   return !isLocalHttp;

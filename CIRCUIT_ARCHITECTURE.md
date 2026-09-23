@@ -347,6 +347,8 @@ Rules:
 
 This table is reserved for provider (Jupiter) auth. Circuit login does not use it.
 
+**Not created (Task 8).** The Jupiter JWT is never persisted: it lives only in the HttpOnly `circuit_jupiter_session` cookie (§8, §11). There is no `wallet_auth_sessions` migration, and one should only be added if a server-side flow ever needs the JWT without a browser request, in which case it must be encrypted.
+
 ### 5.8 `mock_provider_orders` (demo infrastructure)
 
 Durable state of the simulated execution provider, used only when `CIRCUIT_JUPITER_MODE=mock`. It stands in for the provider's own order records, so simulated orders survive reloads, browser closure and serverless restarts. It is never read as real Jupiter or Solana state, and it is removable once live execution is the only supported mode.
@@ -395,6 +397,41 @@ Rules:
 - signatures are not stored;
 - expired rows may be deleted; they carry no audit value.
 
+### 5.9 `jupiter_deposit_preparations`
+
+Pre-signing state for a live Jupiter Trigger deposit (Task 8, migration `0004`). Jupiter's `POST /deposit/craft` returns an UNSIGNED transaction and a **single-use `requestId`** that the later `POST /orders/price` must present with the signed deposit. If the requestId were lost after the wallet signed, the deposit could not be tied to an order, so it is committed **before** the unsigned transaction is returned to the browser.
+
+```text
+id                    uuid PK
+policy_id             uuid FK policies.id NOT NULL
+wallet_id             uuid FK wallets.id NOT NULL
+status                enum PREPARING | CRAFTED | CONSUMED | INVALIDATED
+deposit_request_id    text UNIQUE NULL          -- Jupiter's single-use requestId (set on CRAFTED)
+unsigned_transaction  text NULL                 -- base64 UNSIGNED deposit tx, exactly as crafted
+receiver_address      text NULL                 -- Jupiter vault receiving the deposit
+input_mint            text NOT NULL
+output_mint           text NOT NULL
+input_amount_atomic   numeric(78,0) NOT NULL    -- CHECK > 0
+created_at            timestamptz NOT NULL
+updated_at            timestamptz NOT NULL
+```
+
+Constraints:
+
+```text
+UNIQUE (policy_id) WHERE status IN ('PREPARING', 'CRAFTED')    -- at most one active preparation per policy
+CHECK status NOT IN ('CRAFTED', 'CONSUMED') OR (deposit_request_id AND unsigned_transaction are NOT NULL)
+```
+
+Rules:
+
+- `PREPARING` is a reservation row inserted before the provider call; the Jupiter HTTP call never runs inside a DB transaction;
+- `PREPARING → CRAFTED` is a compare-and-set that stores the requestId and unsigned tx, committed before the API responds;
+- a failed craft, or a `PREPARING` row older than 60 s (a crashed request), becomes `INVALIDATED`;
+- `CONSUMED` is reserved for Task 9 (order created with this requestId);
+- a **signed** deposit transaction is never stored here or anywhere else in Circuit;
+- the JWT is never stored here.
+
 ---
 
 ## 6. Directory structure
@@ -433,11 +470,18 @@ No new top-level directory without editing this file.
 │       ├── auth/nonce/route.ts
 │       ├── auth/verify/route.ts
 │       ├── auth/logout/route.ts
-│       ├── jupiter/auth/... 
+│       ├── _lib/jupiter-route.ts     (session wallet + Jupiter cookie preamble; clears the cookie on 401)
+│       ├── jupiter/auth/challenge/route.ts
+│       ├── jupiter/auth/verify/route.ts
+│       ├── jupiter/auth/logout/route.ts
+│       ├── jupiter/status/route.ts
+│       ├── jupiter/vault/register/route.ts
+│       ├── policies/[policyId]/jupiter/deposit/route.ts   (prepare only; never signs or submits)
 │       └── cron/reconcile/route.ts
 │
 ├── components/
 │   ├── wallet/
+│   ├── jupiter/        (live-mode Jupiter auth + vault panel)
 │   ├── policy/
 │   ├── asset/
 │   └── ui/
@@ -463,7 +507,12 @@ No new top-level directory without editing this file.
 │   │   ├── list-assets.ts
 │   │   ├── policy-view.ts
 │   │   ├── policy-lifecycle.ts
-│   │   └── simulate-provider-fill.ts   (mock mode only)
+│   │   ├── simulate-provider-fill.ts   (mock mode only)
+│   │   └── jupiter/
+│   │       ├── auth.ts             (challenge, base64 → base58 signature, verify)
+│   │       ├── vault.ts            (status, explicit registration)
+│   │       ├── prepare-deposit.ts  (gated BUY deposit preparation; requestId durability)
+│   │       └── errors.ts           (Jupiter failure → AppError, live-mode and JWT guards)
 │   │
 │   ├── integrations/
 │   │   ├── pyth/
@@ -471,8 +520,7 @@ No new top-level directory without editing this file.
 │   │   │   ├── mapper.ts
 │   │   │   └── types.ts
 │   │   └── jupiter/
-│   │       ├── client.ts
-│   │       ├── auth.ts
+│   │       ├── client.ts     (HTTP: tokens, quote, auth, vault, deposit craft)
 │   │       ├── trigger.ts    (pure Circuit → Trigger V2 mapping, provider constants)
 │   │       ├── types.ts      (Circuit-owned provider contract)
 │   │       ├── schemas.ts    (Zod DTOs for Trigger V2, Tokens V2, Swap quote)
@@ -490,6 +538,7 @@ No new top-level directory without editing this file.
 │   │   │   ├── policies.ts
 │   │   │   ├── executions.ts
 │   │   │   ├── auth-nonces.ts
+│   │   │   ├── jupiter-deposit-preparations.ts
 │   │   │   └── mock-provider-orders.ts
 │   │   └── migrations/
 │   │
@@ -498,6 +547,7 @@ No new top-level directory without editing this file.
 │   │   ├── verify-wallet.ts
 │   │   ├── session.ts
 │   │   ├── session-token.ts
+│   │   ├── jupiter-session.ts   (HttpOnly Jupiter JWT cookie, wallet-bound)
 │   │   ├── login.ts
 │   │   └── current-wallet.ts
 │   │
@@ -613,6 +663,16 @@ policy.wallet_id == authenticated_wallet.id
 Knowing a UUID is not authorization.
 
 Jupiter authorization is separate. A Circuit session cookie never grants authority to move funds.
+
+Three credentials, shown separately in the UI:
+
+```text
+CIRCUIT SIGN-IN   circuit_session cookie (Circuit HMAC, 8h)        proves wallet identity to Circuit
+JUPITER AUTH      circuit_jupiter_session cookie (Jupiter JWT, ≤24h) Jupiter Trigger bearer token
+JUPITER VAULT     provider-side Privy vault (per wallet)           where Trigger deposits sit
+```
+
+`circuit_jupiter_session` is HttpOnly, SameSite=Lax, Path=/, Secure except on HTTP localhost, and has Max-Age of at most 24 h. Its value is `<wallet>~<jwt>` and it is only honored for the matching Circuit session wallet. The JWT is never inside the Circuit session token, never in the database, API JSON, logs, `localStorage` or `sessionStorage`. Circuit logout and a new Circuit sign-in both clear it; `POST /api/jupiter/auth/logout` clears only it.
 
 ---
 
@@ -752,6 +812,26 @@ Corrections recorded in Task 7 (current docs are authoritative):
 - **States:** `orderState` is `pending | open | executing | filled | pending_withdraw | cancelled | expired | failed`. `pending`, `executing` and `pending_withdraw` are in progress: no Circuit transition.
 
 Use exact current Trigger V2 docs when implementing. Do not invent fields from memory.
+
+**Task 8: authentication, vault, deposit preparation (live mode only).**
+
+```text
+POST /api/jupiter/auth/challenge   session wallet → Jupiter challenge (type "message"), returned unchanged
+                                   UI shows it → explicit "Sign Jupiter login" → wallet.signMessage
+POST /api/jupiter/auth/verify      { signature: base64 } → base58 → Jupiter /auth/verify → JWT → HttpOnly cookie
+POST /api/jupiter/auth/logout      clears only the Jupiter cookie
+GET  /api/jupiter/status           { mode, authenticated, expired, vault } — never the JWT; GET /vault 404 → NOT_REGISTERED
+POST /api/jupiter/vault/register   explicit user action only; GET /vault/register; 409 = existing vault (success)
+POST /api/policies/[id]/jupiter/deposit   prepare only (see §5.9); never signs, submits or calls /orders/price
+```
+
+- The wallet is always the Circuit session wallet. The UI blocks when the connected wallet differs, and explains when the wallet cannot `signMessage`.
+- Jupiter 401 → `PROVIDER_AUTH_REQUIRED`, the cookie is cleared, and the UI shows the expired/reconnect state. Gateway 403 (`{code,message}`) → `PROVIDER_UNAVAILABLE`; Trigger 403/400 → `PROVIDER_REJECTED`; timeouts/network/5xx/429/malformed → `PROVIDER_UNAVAILABLE` (retryable).
+- Mock mode is unchanged: these routes refuse with `PROVIDER_UNAVAILABLE` and never call Jupiter; the panel is not rendered.
+- **BUY only.** SELL is rejected before any craft: "Live AAPLx sell orders are not enabled because the token's transfer-hook deposit path has not been verified with Jupiter Trigger."
+- **Deposit gates, in order:** live mode → JWT cookie → owned DRAFT, unexpired policy → BUY → active asset → `liveBuyDepositGate` (Pyth live check PASSED, Jupiter BUY side not restricted/failed, execution-price calibration CALIBRATED) → USDC → stock-token mints → ≥ 10 USD. Missing or malformed evidence fails closed.
+- **Execution-price calibration blocker (`EXECUTION_PRICE_CALIBRATION_REQUIRED`).** Circuit compiles `compiledTriggerUsd` from Pyth's underlying equity (AAPL), while Jupiter triggers on the token's USD price (AAPLx, with a ScaledUiAmount multiplier). `compiledTriggerUsd` must not be copied blindly into `triggerPriceUsd`; live deposits stay blocked until the relationship is calibrated with an entitled Pyth key.
+- Production state: AAPLx has `pythLiveCheck: NOT_ENTITLED` and calibration `REQUIRED`, so deposit preparation is blocked there.
 
 Jupiter owns keeper execution. Circuit owns user policy, reference context, and local audit state.
 
@@ -1201,6 +1281,10 @@ Conditional update from `ARMED`.
 `executions.policy_id` is unique.
 
 Repeated reconciliation is safe.
+
+### Jupiter deposit preparation
+
+Reservation, not a held transaction: insert a `PREPARING` row (partial unique index = one active per policy) → call `/deposit/craft` outside any DB transaction → compare-and-set to `CRAFTED` with the requestId, committed before responding. Concurrent callers receive the existing `CRAFTED` preparation or a retryable `POLICY_STATE_CONFLICT`; they never trigger a second craft. Verified with 5 simultaneous prepares → 1 craft, 1 active row.
 
 ### Cancel versus fill
 

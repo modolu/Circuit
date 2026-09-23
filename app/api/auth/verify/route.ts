@@ -1,3 +1,4 @@
+import { clearJupiterSessionCookie } from "@/src/auth/jupiter-session";
 import { completeLogin } from "@/src/auth/login";
 import { createSessionToken, setSessionCookie, SESSION_TTL_SECONDS } from "@/src/auth/session";
 import { getSessionSecret } from "@/src/config/env";
@@ -28,6 +29,8 @@ export async function POST(request: Request) {
       requestId,
     );
     setSessionCookie(response, token);
+    // A new Circuit sign-in starts without a Jupiter session; Jupiter auth is a separate explicit step.
+    clearJupiterSessionCookie(response);
     return response;
   } catch (error) {
     return jsonError(error, requestId, logger, "auth.login_failed");

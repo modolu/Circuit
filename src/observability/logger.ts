@@ -37,6 +37,9 @@ const SENSITIVE_EXACT_KEYS = new Set([
   "signedtransaction",
   "depositsignedtx",
   "challenge",
+  "unsignedtransaction",
+  "circuit_jupiter_session",
+  "jupitersession",
 ]);
 
 function isSensitiveKey(key: string): boolean {

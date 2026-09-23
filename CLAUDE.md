@@ -44,7 +44,7 @@ Precedence when they conflict: **ARCHITECTURE > PRODUCT BRIEF > CLAUDE.md**, exc
 | Validation | Zod 4 at every external boundary |
 | Money | `bigint` for atomic token amounts, `decimal.js` 10.6.0 (local `Dec` clone in `src/domain/money.ts`, precision 64) for USD values. Never `number` for money. |
 | Wallet | `@solana/wallet-adapter-base` 0.9.28, `@solana/wallet-adapter-react` 0.15.40, `@solana/wallet-adapter-react-ui` 0.9.40, with Wallet Standard discovery (no explicit adapters: `WALLET_STANDARD_ONLY = []` in `components/wallet/solana-provider.tsx`). **Do not add `@solana/wallet-adapter-wallets`.** |
-| Solana client | `@solana/web3.js` 1.99.0, for addresses, signatures, and transactions only. Ed25519 login verification: `tweetnacl` 1.0.3 (server-side). |
+| Solana client | `@solana/web3.js` 1.99.0, for addresses, signatures, and transactions only. Ed25519 login verification: `tweetnacl` 1.0.3 (server-side). Jupiter signature encoding (base64 → base58): `bs58` 6.0.0 (server-side). |
 | Reference data | Pyth Pro REST, server-side only, on demand (no Circuit-owned WebSocket) |
 | Execution | Jupiter Trigger V2 REST, server-side only |
 | Tests | Vitest + Testing Library (unit/service/component), Playwright (e2e critical path) |
@@ -76,18 +76,19 @@ This mirrors `CIRCUIT_ARCHITECTURE.md` §6 exactly. **Do not add a new top-level
 │       ├── policies/[policyId]/arm/route.ts
 │       ├── policies/[policyId]/cancel/route.ts
 │       ├── policies/[policyId]/reconcile/route.ts
-│       ├── jupiter/auth/...
+│       ├── jupiter/auth/{challenge,verify,logout}/route.ts, jupiter/status, jupiter/vault/register
+│       ├── policies/[policyId]/jupiter/deposit/route.ts   # prepare only, never signs
 │       └── cron/reconcile/route.ts
 ├── components/                  # presentation + browser interaction; no secrets
-│   ├── wallet/  policy/  asset/  ui/
+│   ├── wallet/  jupiter/  policy/  asset/  ui/
 ├── src/
 │   ├── domain/                  # pure: policy.ts money.ts asset.ts errors.ts
-│   ├── services/                # use cases: create/compile/arm/cancel/reconcile-policy.ts, get-reference.ts
+│   ├── services/                # use cases: create/compile/arm/cancel/reconcile-policy.ts, get-reference.ts, jupiter/{auth,vault,prepare-deposit,errors}.ts
 │   ├── integrations/
 │   │   ├── pyth/                # client.ts mapper.ts types.ts
-│   │   └── jupiter/             # client.ts auth.ts trigger.ts types.ts (+ mock adapter, see §11)
+│   │   └── jupiter/             # client.ts trigger.ts schemas.ts types.ts token-compat.ts (+ mock adapter, see §11)
 │   ├── db/                      # client.ts schema.ts repositories/ migrations/
-│   ├── auth/                    # wallet-message.ts verify-wallet.ts session.ts
+│   ├── auth/                    # wallet-message.ts verify-wallet.ts session.ts jupiter-session.ts
 │   ├── validation/              # policy.ts api.ts (Zod schemas)
 │   ├── config/                  # env.ts assets.ts
 │   └── observability/           # logger.ts
@@ -233,7 +234,7 @@ Vendor-specific names (Jupiter/Pyth field names) must not appear outside `src/in
 - A Circuit session never grants authority to move funds. Jupiter authorization is separate and explicit.
 - **Curated assets only.** Users cannot submit arbitrary mints. Never infer a mint from a ticker. **Do not invent token mints, Pyth feed IDs, Jupiter fields, or transaction signatures.** Every catalog value is sourced from an issuer, Pyth, or Jupiter page, and the source is recorded in `assets.metadata`. Seed assets ship disabled for execution until verified (Architecture §27).
 - **State honesty:** never set `ARMED`, `EXECUTED`, or `CANCELLED` before the external source confirms it. If a fill races a cancel, the provider-confirmed fill wins.
-- If a provider JWT must be persisted, encrypt it with `CIRCUIT_TOKEN_ENCRYPTION_KEY` and expire it aggressively.
+- If a provider JWT must be persisted, encrypt it with `CIRCUIT_TOKEN_ENCRYPTION_KEY` and expire it aggressively. (Task 8 does not persist it: see §12, Jupiter auth.)
 - `/api/cron/reconcile` requires `Authorization: Bearer ${CRON_SECRET}`.
 - Rate-limit nonce creation and provider-backed mutations only with a free managed option. No Redis.
 - Public IDs are UUIDs. Never expose sequential IDs.
@@ -305,7 +306,7 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
 **Jupiter Trigger V2 (verified 2026-09-23, Task 7; `src/integrations/jupiter/`)**
 - **Sources:** docs `developers.jup.ag/docs/llms-full.txt` (trigger/*) and OpenAPI `trigger/v2/trigger.yaml` v2.0.0. Trigger V2 is **beta**, so schemas are non-strict (unknown fields ignored).
 - **Changelog:** May 2026 made `orderType`/`orderSubType` mandatory on craft-deposit; April 2026 removed `/auth/verify-token`. V1 is not used.
-- **Base and auth:** `https://api.jup.ag/trigger/v2`, header `x-api-key`. Auth is `POST /auth/challenge` (message|transaction, 5 min TTL), then the wallet signs, then `POST /auth/verify` (base58 signature) returns a **JWT valid 24h with no refresh endpoint**. It's the same JWT for every call. Never store it in localStorage; Task 8 decides ephemeral vs encrypted persistence.
+- **Base and auth:** `https://api.jup.ag/trigger/v2`, header `x-api-key`. Auth is `POST /auth/challenge` (message|transaction, 5 min TTL), then the wallet signs, then `POST /auth/verify` (base58 signature) returns a **JWT valid 24h with no refresh endpoint**. It's the same JWT for every call. Never store it in localStorage (Task 8 decision below: HttpOnly cookie only).
 - **Flow:** `GET /vault` (404 means none; `GET /vault/register` creates a Privy custodial vault, so do not call it casually) → `POST /deposit/craft` `{inputMint, outputMint, userAddress, amount, orderType:"price", orderSubType:"single"}` returns an **unsigned** tx plus a single-use `requestId` → wallet signs → `POST /orders/price` `{orderType:"single", depositRequestId, depositSignedTx, userPubkey, inputMint, inputAmount, outputMint, triggerMint, triggerCondition, triggerPriceUsd, slippageBps, expiresAt}` returns `{id, txSignature (deposit), depositConfirmed}`.
 - **Monitoring and cancel:** `GET /orders/history` (no get-by-id). Cancel is `POST /orders/price/cancel/{id}` (stops fills; unsigned withdrawal) → sign → `POST /orders/price/confirm-cancel/{id}` `{signedTransaction, cancelRequestId}`. Expired orders need the same withdrawal.
 - **Mapping** (`toJupiterSinglePriceOrderIntent`, pure; unit-tested for all four directions):
@@ -329,9 +330,23 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
 - **Proven vs not** (`assets.ts` `jupiter.levels`):
   - PASSED: identity, token recognition, spot route.
   - RESTRICTED: extensions (SELL).
-  - NOT_TESTED: Trigger API access with our key (**JUPITER_API_KEY not configured**; the challenge endpoint answered on Jupiter's documented keyless tier), JWT, vault, deposit craft, live order.
+  - PASSED (Task 8 re-probe, 2026-09-23): Trigger API access with our `JUPITER_API_KEY` (challenge 200, no gateway 403).
+  - NOT_TESTED: JWT, vault, deposit craft, live order (need the user's wallet signature).
   - Execution stays disabled.
 - **Probe:** `pnpm test:jupiter-live` runs the opt-in, no-funds checks and prints a summary. It never signs, never sends a `taker`, and never registers a vault.
+
+**Jupiter auth, vault and deposit preparation (Task 8; Arch §5.9, §8, §11)**
+- **Three separate credentials:** CIRCUIT SIGN-IN (`circuit_session`), JUPITER AUTH (`circuit_jupiter_session`), JUPITER VAULT (provider-side Privy vault). The UI names them separately.
+- **Auth flow (server-side, session wallet only):** `POST /api/jupiter/auth/challenge` returns Jupiter's `type:"message"` challenge **unchanged** → UI shows it → explicit "Sign Jupiter login" click → `wallet.signMessage` → `POST /api/jupiter/auth/verify {signature: base64}` → server converts to base58 (`bs58`) → Jupiter `/auth/verify` → JWT.
+- **JWT storage:** only in the HttpOnly cookie `circuit_jupiter_session` (`<wallet>~<jwt>`, honored only for the matching session wallet), SameSite=Lax, Path=/, Secure except on HTTP localhost, Max-Age 86400. **Never** in the DB, API JSON, logs, `localStorage`/`sessionStorage`, React state, or the Circuit session token. Logger redacts `circuit_jupiter_session`, JWT shapes, challenges and transactions.
+- Jupiter 401 → `PROVIDER_AUTH_REQUIRED`, cookie cleared, UI shows expired/reconnect. `POST /api/jupiter/auth/logout` clears only the Jupiter cookie. Circuit logout and a new Circuit sign-in also clear it.
+- **Wallet consistency:** UI blocks Jupiter actions when the connected wallet ≠ Circuit session wallet, and explains when the wallet lacks `signMessage`.
+- **Vault:** `GET /api/jupiter/status` looks up the vault (404 → NOT_REGISTERED) and never returns the JWT. `POST /api/jupiter/vault/register` is an **explicit click only** (never on page load). 409 is success (existing vault).
+- **Live-only UI:** the Jupiter panel renders on the dashboard only in live mode. Mock mode is unchanged; the Jupiter routes refuse with `PROVIDER_UNAVAILABLE` and never call Jupiter.
+- **BUY-only live.** SELL is rejected before any craft: "Live AAPLx sell orders are not enabled because the token's transfer-hook deposit path has not been verified with Jupiter Trigger."
+- **EXECUTION_PRICE_CALIBRATION_REQUIRED:** Jupiter triggers on the token's USD price, and Circuit compiles from the Pyth underlying. `compiledTriggerUsd` must **not** be copied blindly into `triggerPriceUsd`. AAPLx `executionPriceCalibration.status = "REQUIRED"` blocks live deposits until calibrated with an entitled Pyth key.
+- **Deposit preparation** (`POST /api/policies/[id]/jupiter/deposit`): the gates are live mode, JWT, owned unexpired DRAFT, BUY, active asset, `liveBuyDepositGate` (Pyth PASSED + BUY not restricted + CALIBRATED; malformed evidence fails closed), USDC → stock mints, and ≥ 10 USD. Reservation `PREPARING` row → `/deposit/craft` outside any DB transaction → CAS to `CRAFTED` with the requestId **committed before** the unsigned tx is returned. There is one active preparation per policy (partial unique index). A failed craft or a stale (>60 s) reservation becomes `INVALIDATED`. **Production is blocked** (Pyth NOT_ENTITLED, calibration REQUIRED).
+- **No-signing boundary (Task 8):** the only wallet signature is the off-chain Jupiter auth message. Never call `signTransaction`/`sendTransaction` for a deposit, never submit the unsigned tx, never call `/orders/price`, and never persist a signed deposit. A boundary test enforces this for the Jupiter UI/services/routes.
 
 **Reconciliation (Vercel Hobby constraint)**
 - Reconciliation runs on **policy page load**, **manual "Refresh status"**, and **after cancel completion**. This is the primary path for the hackathon.
@@ -464,6 +479,7 @@ These should be recorded in `CIRCUIT_ARCHITECTURE.md` when the user authorizes e
 - **Neon:** `@neondatabase/serverless` + Drizzle `neon-serverless` for transactional flows. No `neon-http` there. `ws` only if Node 22's WebSocket proves insufficient.
 - **Tooling:** pnpm 11.5.1 as installed.
 - **Mock in deployment:** allowed with SIMULATED labelling, and live is preferred for final proof (§11).
+- **Jupiter JWT (Task 8):** HttpOnly `circuit_jupiter_session` cookie only; not persisted, so there is no `wallet_auth_sessions` table. The deposit requestId is persisted in `jupiter_deposit_preparations` before signing.
 
 ## 21. Open questions (resolve before the milestone that needs them)
 

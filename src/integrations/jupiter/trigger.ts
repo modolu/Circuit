@@ -110,12 +110,15 @@ export function toJupiterSinglePriceOrderIntent(
 }
 
 /** POST /deposit/craft body. The response is an UNSIGNED transaction the user's wallet signs later. */
-export function toDepositCraftRequest(intent: JupiterSinglePriceOrderIntent, userAddress: string): DepositCraftRequest {
+export function toDepositCraftRequest(
+  deposit: Pick<JupiterSinglePriceOrderIntent, "inputMint" | "outputMint" | "inputAmount">,
+  userAddress: string,
+): DepositCraftRequest {
   return {
-    inputMint: intent.inputMint,
-    outputMint: intent.outputMint,
+    inputMint: deposit.inputMint,
+    outputMint: deposit.outputMint,
     userAddress,
-    amount: intent.inputAmount,
+    amount: deposit.inputAmount,
     orderType: "price",
     orderSubType: "single",
   };

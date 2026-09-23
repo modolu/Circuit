@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { comparisonFeedSchema, EXECUTION_STATUSES, jupiterVerificationSchema, primaryReferenceSchema } from "../domain/asset.ts";
+import {
+  comparisonFeedSchema,
+  EXECUTION_STATUSES,
+  executionPriceCalibrationSchema,
+  jupiterVerificationSchema,
+  primaryReferenceSchema,
+} from "../domain/asset.ts";
 
 /**
  * The curated tokenized-stock catalog (CIRCUIT_ARCHITECTURE.md §27).
@@ -29,6 +35,7 @@ export const verifiedAssetSchema = z.object({
   // Execution stays disabled until Jupiter Trigger compatibility is verified (§27 step 4–5).
   execution: z.object({ status: z.enum(EXECUTION_STATUSES) }),
   jupiter: jupiterVerificationSchema,
+  executionPriceCalibration: executionPriceCalibrationSchema,
   verification: z.object({
     issuerSources: z.array(z.url()).min(1),
     mintSources: z.array(z.string().min(1)).min(1),
@@ -98,10 +105,13 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
           detail: "No transferFeeConfig. transferHook extension present (programId null): Trigger rejects transfer-hook DEPOSIT mints unless whitelisted, so SELL is restricted; BUY deposits USDC and is unaffected per docs.",
         },
         TRIGGER_API_ACCESS_VERIFIED: {
-          result: "NOT_TESTED",
-          detail: "JUPITER_API_KEY not configured, so the key's Trigger permission is unknown. POST /trigger/v2/auth/challenge answered 200 on Jupiter's documented keyless tier (endpoint reachable, schema matches).",
+          result: "PASSED",
+          detail: "2026-09-23 (pnpm test:jupiter-live, Task 8): with the deployment's JUPITER_API_KEY, POST /trigger/v2/auth/challenge returned 200 (type message) with no gateway 403. JWT-authenticated calls (vault, deposit craft) still need the user's wallet signature.",
         },
-        TRIGGER_DEPOSIT_CRAFT_VERIFIED: { result: "NOT_TESTED", detail: "Needs a wallet-signed JWT and an existing vault (Task 8)." },
+        TRIGGER_DEPOSIT_CRAFT_VERIFIED: {
+          result: "NOT_TESTED",
+          detail: "Needs a wallet-signed JWT and a vault. Task 8 builds the prepare path, but it stays blocked by the Pyth live check and execution-price calibration.",
+        },
         LIVE_TRIGGER_ORDER_VERIFIED: { result: "NOT_TESTED", detail: "No funded order has been placed (Task 9)." },
       },
       sides: {
@@ -114,6 +124,11 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
           detail: "AAPLx → USDC: deposit mint AAPLx carries transferHook, which is rejected at deposit unless Jupiter whitelists it. Keep SELL disabled until a live deposit craft proves otherwise.",
         },
       },
+    },
+    executionPriceCalibration: {
+      status: "REQUIRED",
+      detail:
+        "Jupiter triggers on AAPLx's USD price; Circuit compiles from Pyth AAPL. AAPLx has a ScaledUiAmount multiplier (≈1.00327 observed 2026-09-23). The AAPL → AAPLx trigger relationship must be measured with an entitled Pyth key before any live order or deposit signing.",
     },
     verification: {
       issuerSources: ["https://api.backed.fi/api/v2/public/assets", "https://api.backed.fi/api/v1/token"],

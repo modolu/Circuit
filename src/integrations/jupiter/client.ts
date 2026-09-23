@@ -2,22 +2,27 @@ import "server-only";
 import { getServerEnv } from "../../config/env.ts";
 import {
   authChallengeResponseSchema,
+  authVerifyResponseSchema,
+  depositCraftResponseSchema,
   gatewayErrorSchema,
   swapQuoteResponseSchema,
   tokenInfoSchema,
   tokenSearchResponseSchema,
   triggerErrorSchema,
+  vaultResponseSchema,
   type AuthChallengeResponse,
+  type DepositCraftRequest,
+  type DepositCraftResponse,
   type SwapQuote,
   type TokenInfo,
 } from "./schemas.ts";
 import { JUPITER_API_BASE_URL, JUPITER_TRIGGER_PATH } from "./trigger.ts";
 
 /*
- * Server-side Jupiter HTTP client, limited to Task 7's read-only verification calls:
- * exact-mint token lookup, quote-only route (never a `taker`, so no transaction is
- * built), and the Trigger auth challenge. There is no vault, deposit, order or cancel
- * I/O yet. The API key goes only in the `x-api-key` header, never in errors or logs.
+ * Server-side Jupiter HTTP client (Trigger V2 docs re-verified 2026-09-23).
+ * - The API key goes only in the `x-api-key` header, never in errors or logs.
+ * - The Trigger JWT is passed in per call (`Authorization: Bearer`) and never stored here.
+ * - There is no order creation, cancellation or transaction submission (Task 9+).
  */
 
 export type JupiterFailureReason =
@@ -37,7 +42,7 @@ export class JupiterRequestError extends Error {
   override readonly name = "JupiterRequestError";
   readonly reason: JupiterFailureReason;
   readonly status: number | undefined;
-  /** Provider message with any secret-looking values stripped; safe to log. */
+  /** Provider message with secret-looking values stripped; safe to log. */
   readonly providerMessage: string | undefined;
 
   constructor(reason: JupiterFailureReason, status?: number, providerMessage?: string) {
@@ -48,42 +53,36 @@ export class JupiterRequestError extends Error {
   }
 }
 
+export interface JupiterVault {
+  userPubkey: string;
+  vaultPubkey: string;
+}
+
 const REQUEST_TIMEOUT_MS = 10_000;
 
-function scrub(message: string, apiKey: string | undefined): string {
+function scrub(message: string, secrets: Array<string | undefined>): string {
   let safe = message.slice(0, 300);
-  if (apiKey) safe = safe.split(apiKey).join("[REDACTED]");
+  for (const secret of secrets) if (secret) safe = safe.split(secret).join("[REDACTED]");
   return safe.replace(/eyJ[\w-]+\.[\w-]+\.[\w-]*/g, "[REDACTED_JWT]");
 }
 
-async function classify(response: Response, apiKey: string | undefined): Promise<JupiterRequestError> {
-  const text = await response.text().catch(() => "");
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = undefined;
-  }
-  const gateway = gatewayErrorSchema.safeParse(body);
-  const service = triggerErrorSchema.safeParse(body);
-  const message = gateway.success ? gateway.data.message : service.success ? service.data.error : undefined;
-  const safeMessage = message ? scrub(message, apiKey) : undefined;
-  switch (response.status) {
+function reasonFor(status: number, gatewayShape: boolean): JupiterFailureReason {
+  switch (status) {
     case 400:
-      return new JupiterRequestError("bad_request", 400, safeMessage);
+      return "bad_request";
     case 401:
-      return new JupiterRequestError("unauthorized", 401, safeMessage);
+      return "unauthorized";
     case 403:
-      // Gateway shape `{ code, message }` means the API key lacks permission for this endpoint.
-      return new JupiterRequestError(gateway.success ? "gateway_forbidden" : "forbidden", 403, safeMessage);
+      // Gateway `{ code, message }` = the API key lacks permission; otherwise a Trigger-side refusal.
+      return gatewayShape ? "gateway_forbidden" : "forbidden";
     case 404:
-      return new JupiterRequestError("not_found", 404, safeMessage);
+      return "not_found";
     case 409:
-      return new JupiterRequestError("conflict", 409, safeMessage);
+      return "conflict";
     case 429:
-      return new JupiterRequestError("rate_limited", 429, safeMessage);
+      return "rate_limited";
     default:
-      return new JupiterRequestError("http_error", response.status, safeMessage);
+      return "http_error";
   }
 }
 
@@ -93,6 +92,14 @@ export interface JupiterClient {
   findTokenByMint(mint: string): Promise<TokenInfo | null>;
   quoteRoute(request: { inputMint: string; outputMint: string; amountAtomic: bigint }): Promise<SwapQuote>;
   requestAuthChallenge(walletPubkey: string, type: "message" | "transaction"): Promise<AuthChallengeResponse>;
+  /** Exchanges a base58 message signature for a Trigger JWT (24h, no refresh). */
+  verifyAuth(walletPubkey: string, signatureBase58: string): Promise<string>;
+  /** The caller's vault, or null when none is registered (404). */
+  getVault(jwt: string): Promise<JupiterVault | null>;
+  /** Registers the caller's vault. An existing vault (409) is returned, not treated as a failure. */
+  registerVault(jwt: string): Promise<{ vault: JupiterVault; created: boolean }>;
+  /** Builds an UNSIGNED deposit transaction plus a single-use requestId. It moves no funds by itself. */
+  craftDeposit(jwt: string, request: DepositCraftRequest): Promise<DepositCraftResponse>;
 }
 
 export function createJupiterClient({
@@ -106,23 +113,64 @@ export function createJupiterClient({
   triggerBaseUrl?: string;
   fetchImpl?: typeof fetch;
 }): JupiterClient {
-  async function request(url: URL, init: RequestInit = {}): Promise<unknown> {
+  const triggerUrl = (path: string) => new URL(`${triggerBaseUrl.replace(/\/$/, "")}${path}`);
+
+  /** Sends one request. Returns status and parsed JSON body (or undefined); never throws for HTTP status. */
+  async function send(url: URL, { method = "GET", body, jwt }: { method?: string; body?: unknown; jwt?: string } = {}) {
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (init.body) headers["Content-Type"] = "application/json";
+    if (body !== undefined) headers["Content-Type"] = "application/json";
     if (apiKey) headers["x-api-key"] = apiKey;
+    if (jwt) headers.Authorization = `Bearer ${jwt}`;
     let response: Response;
     try {
-      response = await fetchImpl(url, { ...init, headers, cache: "no-store", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      response = await fetchImpl(url, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        cache: "no-store",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
     } catch (error) {
       const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
       throw new JupiterRequestError(timedOut ? "timeout" : "network");
     }
-    if (!response.ok) throw await classify(response, apiKey);
+    const text = await response.text().catch(() => "");
+    let json: unknown;
     try {
-      return await response.json();
+      json = text ? JSON.parse(text) : undefined;
     } catch {
-      throw new JupiterRequestError("malformed_response", response.status);
+      json = undefined;
     }
+    return { status: response.status, ok: response.ok, json, jwt };
+  }
+
+  function failure(result: { status: number; json: unknown; jwt?: string }): JupiterRequestError {
+    const gateway = gatewayErrorSchema.safeParse(result.json);
+    const service = triggerErrorSchema.safeParse(result.json);
+    const message = gateway.success ? gateway.data.message : service.success ? service.data.error : undefined;
+    return new JupiterRequestError(
+      reasonFor(result.status, gateway.success),
+      result.status,
+      message ? scrub(message, [apiKey, result.jwt]) : undefined,
+    );
+  }
+
+  function parse<T>(schema: { safeParse: (v: unknown) => { success: true; data: T } | { success: false } }, json: unknown, status: number): T {
+    const parsed = schema.safeParse(json);
+    if (!parsed.success) throw new JupiterRequestError("malformed_response", status);
+    return parsed.data;
+  }
+
+  const toVault = (v: { userPubkey: string; vaultPubkey: string }): JupiterVault => ({
+    userPubkey: v.userPubkey,
+    vaultPubkey: v.vaultPubkey,
+  });
+
+  async function getVault(jwt: string): Promise<JupiterVault | null> {
+    const result = await send(triggerUrl("/vault"), { jwt });
+    if (result.status === 404) return null;
+    if (!result.ok) throw failure(result);
+    return toVault(parse(vaultResponseSchema, result.json, result.status));
   }
 
   return {
@@ -131,10 +179,11 @@ export function createJupiterClient({
     async findTokenByMint(mint) {
       const url = new URL("/tokens/v2/search", apiBaseUrl);
       url.searchParams.set("query", mint);
-      const list = tokenSearchResponseSchema.safeParse(await request(url));
-      if (!list.success) throw new JupiterRequestError("malformed_response");
+      const result = await send(url);
+      if (!result.ok) throw failure(result);
+      const list = parse(tokenSearchResponseSchema, result.json, result.status);
       // Search is fuzzy: accept only an object whose id is exactly the requested mint.
-      for (const item of list.data) {
+      for (const item of list) {
         const token = tokenInfoSchema.safeParse(item);
         if (token.success && token.data.id === mint) return token.data;
       }
@@ -147,19 +196,48 @@ export function createJupiterClient({
       url.searchParams.set("outputMint", outputMint);
       url.searchParams.set("amount", amountAtomic.toString());
       // Deliberately no `taker`: Jupiter returns a quote only, with no transaction to sign.
-      const quote = swapQuoteResponseSchema.safeParse(await request(url));
-      if (!quote.success) throw new JupiterRequestError("malformed_response");
-      if (quote.data.transaction) throw new JupiterRequestError("malformed_response", undefined, "unexpected transaction in a quote-only request");
-      return quote.data;
+      const result = await send(url);
+      if (!result.ok) throw failure(result);
+      const quote = parse(swapQuoteResponseSchema, result.json, result.status);
+      if (quote.transaction) throw new JupiterRequestError("malformed_response", result.status, "unexpected transaction in a quote-only request");
+      return quote;
     },
 
     async requestAuthChallenge(walletPubkey, type) {
-      const url = new URL(`${triggerBaseUrl.replace(/\/$/, "")}/auth/challenge`);
-      const parsed = authChallengeResponseSchema.safeParse(
-        await request(url, { method: "POST", body: JSON.stringify({ walletPubkey, type }) }),
-      );
-      if (!parsed.success) throw new JupiterRequestError("malformed_response");
-      return parsed.data;
+      const result = await send(triggerUrl("/auth/challenge"), { method: "POST", body: { walletPubkey, type } });
+      if (!result.ok) throw failure(result);
+      return parse(authChallengeResponseSchema, result.json, result.status);
+    },
+
+    async verifyAuth(walletPubkey, signatureBase58) {
+      const result = await send(triggerUrl("/auth/verify"), {
+        method: "POST",
+        body: { type: "message", walletPubkey, signature: signatureBase58 },
+      });
+      if (!result.ok) throw failure(result);
+      return parse(authVerifyResponseSchema, result.json, result.status).token;
+    },
+
+    getVault,
+
+    async registerVault(jwt) {
+      const result = await send(triggerUrl("/vault/register"), { jwt });
+      if (result.ok) return { vault: toVault(parse(vaultResponseSchema, result.json, result.status)), created: true };
+      if (result.status === 409) {
+        // Documented: the existing vault is returned in `details`. Otherwise re-fetch it.
+        const details = triggerErrorSchema.safeParse(result.json);
+        const existing = details.success ? vaultResponseSchema.safeParse(details.data.details) : null;
+        if (existing?.success) return { vault: toVault(existing.data), created: false };
+        const vault = await getVault(jwt);
+        if (vault) return { vault, created: false };
+      }
+      throw failure(result);
+    },
+
+    async craftDeposit(jwt, request) {
+      const result = await send(triggerUrl("/deposit/craft"), { method: "POST", body: request, jwt });
+      if (!result.ok) throw failure(result);
+      return parse(depositCraftResponseSchema, result.json, result.status);
     },
   };
 }
