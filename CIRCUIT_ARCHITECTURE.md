@@ -68,7 +68,7 @@ A requirement must force new infrastructure before it is introduced.
 | UI | React 19 | Native Next.js stack. |
 | Styling | Tailwind CSS 4 | Fast product UI iteration without introducing a large design-system dependency. |
 | Component primitives | Radix UI only where accessibility primitives are needed | Keep the dependency surface small. |
-| Database | PostgreSQL 17 on Neon | Relational state fits policies/orders/events; managed and quick to provision. |
+| Database | PostgreSQL on Neon (the provisioned project runs PostgreSQL 18) | Relational state fits policies/orders/events; managed and quick to provision. The schema uses only standard PostgreSQL features (identity columns, `gen_random_uuid()`, partial indexes, PL/pgSQL triggers), so it does not depend on a specific minor or patch release. |
 | Query layer | Drizzle ORM | Explicit SQL-shaped schema/migrations without hiding database behavior. |
 | Validation | Zod 4 | One validation layer at every external boundary. |
 | Wallet | Solana Wallet Standard / compatible adapter | Do not invent custody. |
@@ -274,11 +274,12 @@ Append-only audit trail.
 
 ```text
 id                  uuid PK
+sequence_number     bigint GENERATED ALWAYS AS IDENTITY
 policy_id           uuid FK policies.id NOT NULL
 event_type          text NOT NULL
 source              enum USER | CIRCUIT | JUPITER | SOLANA | SYSTEM
 payload             jsonb NOT NULL
-created_at          timestamptz NOT NULL
+created_at          timestamptz NOT NULL default clock_timestamp()
 ```
 
 Index:
@@ -287,7 +288,12 @@ Index:
 (policy_id, created_at asc)
 ```
 
-Never rewrite ordinary event history. Append corrections.
+Ordering: events are read in `(created_at asc, sequence_number asc)` order.
+
+- `created_at` remains the event timestamp. It defaults to `clock_timestamp()` rather than `now()`, because `now()` is fixed for a whole transaction.
+- `sequence_number` is assigned by the database on insert. It gives a deterministic order when timestamps tie, for example when several events are appended in one transaction.
+
+Never rewrite ordinary event history. Append corrections. Database triggers reject `UPDATE`, `DELETE` and `TRUNCATE` on `policy_events`.
 
 ### 5.5 `executions`
 
