@@ -430,7 +430,8 @@ No new top-level directory without editing this file.
 │   │   ├── cancel-policy.ts
 │   │   ├── reconcile-policy.ts
 │   │   ├── get-reference.ts
-│   │   └── list-assets.ts
+│   │   ├── list-assets.ts
+│   │   └── policy-view.ts
 │   │
 │   ├── integrations/
 │   │   ├── pyth/
@@ -469,6 +470,7 @@ No new top-level directory without editing this file.
 │   ├── config/
 │   │   ├── env.ts
 │   │   ├── reference.ts
+│   │   ├── tokens.ts
 │   │   └── assets.ts
 │   │
 │   └── observability/
@@ -597,14 +599,18 @@ Output:
 
 ```text
 compiledTriggerUsd
-providerOrderFamily
-providerDirection
+orderFamily        (Circuit-internal: SINGLE_PRICE_TRIGGER)
+triggerCondition   (Circuit-internal: AT_OR_BELOW | AT_OR_ABOVE)
 inputMint
 outputMint
 inputAmountAtomic
 slippageBps
-expiry
+expiresAt
 ```
+
+`orderFamily` and `triggerCondition` are Circuit's own representation, not Jupiter wire fields. The Jupiter integration maps them to the documented Trigger V2 request.
+
+BUY: input USDC → output stock token. SELL: input stock token → output USDC. The USDC mint is verified configuration (`src/config/tokens.ts`), never resolved by symbol.
 
 Absolute:
 
@@ -620,6 +626,13 @@ Pyth = 200
 BUY 3% BELOW
 → 194
 ```
+
+Rules:
+
+- **Absolute** prices are taken as entered (at most 2 decimals) and do not depend on the reference.
+- **Relative** triggers compute `reference × (1 ∓ pct/100)` exactly (0 < pct < 100), then round to cents in the **stricter** direction: `BELOW` rounds down and `ABOVE` rounds up. Rounding never makes a trigger fire earlier than the user's expression.
+- **Reference freshness:** `STALE` blocks every draft. `CARRIED` blocks relative triggers but allows absolute ones, with the carried snapshot recorded as such. `UNAVAILABLE` blocks every draft, because each policy persists a reference snapshot.
+- **Token amounts** convert to atomic units without rounding. Excess precision is rejected.
 
 No JavaScript floating point for compiled monetary values.
 
@@ -707,9 +720,11 @@ Browser
 → fetch Pyth reference
 → compile deterministic trigger
 → create DRAFT policy
-→ append POLICY_CREATED event
+→ append POLICY_CREATED (USER), REFERENCE_CAPTURED (CIRCUIT), POLICY_COMPILED (CIRCUIT) events
 → return policy
 ```
+
+The request carries only the asset id and the user's choices. The server resolves the mints, decimals, feed and reference, and never accepts a client-supplied price or mint.
 
 One DB transaction.
 

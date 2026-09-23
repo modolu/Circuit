@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import { AssetReferenceCard, type ReferenceState } from "@/components/asset/asset-reference-card";
 import { formatUsd } from "@/components/asset/format";
+import { PolicyList } from "@/components/policy/policy-list";
+import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { POLICY_STATUS_TONE, StatusChip, type PolicyStatus } from "@/components/ui/status-chip";
 import { ValueBlock } from "@/components/ui/value-block";
 import { shortAddress } from "@/components/wallet/short-address";
 import { WalletSignInPanel } from "@/components/wallet/wallet-sign-in-panel";
+import { getAuthenticatedWallet } from "@/src/auth/current-wallet";
 import { getSession } from "@/src/auth/session";
 import { getDb } from "@/src/db/client";
 import type { PublicAsset } from "@/src/domain/asset";
@@ -15,6 +18,7 @@ import { getPythClient } from "@/src/integrations/pyth/client";
 import { logger } from "@/src/observability/logger";
 import { getAssetReference } from "@/src/services/get-reference";
 import { listPublicAssets } from "@/src/services/list-assets";
+import { listPolicyViewsForWallet, type PolicyView } from "@/src/services/policy-view";
 
 export const metadata: Metadata = {
   title: "Policies",
@@ -114,6 +118,15 @@ export default async function DashboardPage() {
   const session = await getSession();
   const wallet = session?.walletAddress ?? null;
   const catalog = wallet ? await loadCatalog() : null;
+  let policies: PolicyView[] = [];
+  if (wallet) {
+    try {
+      const walletRecord = await getAuthenticatedWallet(getDb());
+      policies = walletRecord ? await listPolicyViewsForWallet(getDb(), walletRecord.id) : [];
+    } catch (error) {
+      logger.error("dashboard.policies_failed", { error: error instanceof Error ? error : undefined });
+    }
+  }
   const firstReference =
     catalog?.status === "loaded"
       ? catalog.entries.find((entry) => entry.state.status === "available")
@@ -138,16 +151,31 @@ export default async function DashboardPage() {
         )}
       </div>
 
-      {wallet ? (
+      {wallet && policies.length > 0 ? (
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <SectionLabel>Your policies</SectionLabel>
+            <ButtonLink href="/policies/new" variant="primary">
+              + New policy
+            </ButtonLink>
+          </div>
+          <PolicyList policies={policies} />
+        </div>
+      ) : wallet ? (
         <Card as="section" aria-labelledby="empty-heading" className="px-5 py-10 sm:px-8 sm:py-12">
           <SectionLabel>Your policies</SectionLabel>
           <h2 id="empty-heading" className="mt-3 max-w-[520px] text-lg font-semibold sm:text-xl">
             No policies yet.
           </h2>
           <p className="mt-2 max-w-[520px] text-[13px] leading-relaxed text-muted">
-            Policy creation arrives in a later milestone. Policies you create with this wallet will be
-            listed here with their provider-confirmed state.
+            Draft a bounded policy for a verified stock token. Drafts are saved here with their captured Pyth
+            reference; arming with Jupiter comes in a later milestone.
           </p>
+          <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-start">
+            <ButtonLink href="/policies/new" variant="primary" size="lg">
+              New policy
+            </ButtonLink>
+          </div>
           <WalletSignInPanel sessionWallet={wallet} size="md" className="mt-6" />
         </Card>
       ) : null}

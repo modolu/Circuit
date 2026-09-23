@@ -1,11 +1,4 @@
-/** Formats an exact decimal string as USD without float conversion: "227.35" → "$227.35". */
-export function formatUsd(decimal: string): string {
-  const negative = decimal.startsWith("-");
-  const [whole = "0", fraction = ""] = (negative ? decimal.slice(1) : decimal).split(".");
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const cents = fraction.padEnd(2, "0");
-  return `${negative ? "-" : ""}$${grouped}.${cents}`;
-}
+export { formatUsd } from "@/src/domain/money";
 
 /** Display-only relative age ("0.8s ago", "3m ago", "2d ago"). */
 export function formatAge(ageMs: number): string {
@@ -26,6 +19,11 @@ const SESSION_LABELS: Record<string, string> = {
   closed: "Market closed",
 };
 
-export function formatSession(session: string | null): string {
+export function formatSession(session: string | null | undefined): string {
   return session ? (SESSION_LABELS[session] ?? session) : "Session not reported";
+}
+
+/** "2026-09-23T15:00:00.000Z" → "2026-09-23 15:00 UTC". Explicit UTC, no local-time conversion. */
+export function formatUtc(iso: string, withSeconds = false): string {
+  return `${iso.replace("T", " ").slice(0, withSeconds ? 19 : 16)} UTC`;
 }

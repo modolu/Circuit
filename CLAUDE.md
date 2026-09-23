@@ -42,7 +42,7 @@ Precedence when they conflict: **ARCHITECTURE > PRODUCT BRIEF > CLAUDE.md**, exc
 | Database | Neon PostgreSQL (free tier; server reports PostgreSQL 18.6) |
 | ORM / migrations | `drizzle-orm` 0.45.3 + `drizzle-kit` 0.31.11, `@neondatabase/serverless` 1.1.0 (`neon-serverless` Pool driver). Tests: `@electric-sql/pglite` 0.5.8 (in-process Postgres, dev-only). |
 | Validation | Zod 4 at every external boundary |
-| Money | `bigint` for atomic token amounts, `decimal.js` for USD values. Never `number` for money. |
+| Money | `bigint` for atomic token amounts, `decimal.js` 10.6.0 (local `Dec` clone in `src/domain/money.ts`, precision 64) for USD values. Never `number` for money. |
 | Wallet | `@solana/wallet-adapter-base` 0.9.28, `@solana/wallet-adapter-react` 0.15.40, `@solana/wallet-adapter-react-ui` 0.9.40, with Wallet Standard discovery (no explicit adapters: `WALLET_STANDARD_ONLY = []` in `components/wallet/solana-provider.tsx`). **Do not add `@solana/wallet-adapter-wallets`.** |
 | Solana client | `@solana/web3.js` 1.99.0, for addresses, signatures, and transactions only. Ed25519 login verification: `tweetnacl` 1.0.3 (server-side). |
 | Reference data | Pyth Pro REST, server-side only, on demand (no Circuit-owned WebSocket) |
@@ -191,6 +191,19 @@ Vendor-specific names (Jupiter/Pyth field names) must not appear outside `src/in
 - Relative triggers: `compiled = reference × (1 ± pct/100)`, computed in Decimal. Store the source expression, compiled trigger, reference value, and feed timestamp together.
 - Reject zero, negative, non-integer atomic, and over-precision inputs at the Zod boundary *and* in the domain.
 - Required unit tests: display↔atomic across decimals, boundaries, invalid inputs, BUY/SELL × ABOVE/BELOW, absolute and relative, slippage bounds, expiry.
+- **Implemented rules** (`src/domain/money.ts`, `src/domain/policy.ts`, `src/services/compile-policy.ts`):
+  - Token amounts are never rounded. More decimal places than the token supports is a `VALIDATION_ERROR`.
+  - Inputs must be plain positive decimals, with no signs, exponents, separators or leading zeros.
+  - Absolute trigger prices allow at most 2 decimals.
+  - Relative percentages allow at most 2 decimals, with 0 < pct < 100.
+  - Compiled triggers are cents (`TRIGGER_USD_SCALE = 2`), rounded in the stricter direction (BELOW → down, ABOVE → up). Jupiter's accepted precision is re-checked in the Jupiter milestone.
+  - Display percentages round half-even.
+  - Form choices: slippage **25 / 50 / 100 bps** (`SLIPPAGE_BPS_OPTIONS`) and expiry **24 / 72 / 168 h**. `expiresAt = createdAt + hours`, exact UTC. The database's 0–10,000 bps check is only a structural bound.
+  - **Reference freshness for drafts:** STALE blocks all drafts (`REFERENCE_STALE`). CARRIED blocks relative triggers (`REFERENCE_STALE`) but allows absolute ones, whose snapshot is stored as CARRIED. UNAVAILABLE blocks all drafts (`REFERENCE_UNAVAILABLE`).
+  - The compiler output uses Circuit-internal `orderFamily`/`triggerCondition`. Jupiter field names are mapped only in the Jupiter integration.
+  - USDC is verified config (`src/config/tokens.ts`: Circle docs plus a mainnet mint check, 6 decimals).
+  - SELL amounts are raw token units. AAPLx's `scaledUiAmountConfig` means wallets may display a scaled amount, so revisit the UI multiplier before live SELL.
+  - The review sentence comes from `describePolicy` (structured fields only).
 
 ## 9. Error-handling conventions
 
@@ -264,6 +277,7 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
   - onchain token metadata (name, symbol, `xstocks-metadata.backed.fi` URI).
 - **Mint caveats:** `scaledUiAmountConfig` means wallet UI amounts can differ from raw ÷ 10^decimals, so money math must use raw atomic units. The mint also has permanent delegate, pausable and freeze authority.
 - **Reference:** `Equity.US.AAPL/USD`, Pyth Pro feed **922** (equity/spot, exponent −5, `min_channel` `fixed_rate@50ms`, stable). Comparison only: `Crypto.AAPLX/USD` feed 1792.
+- **Policy UX while blocked:** with no asset that has a live reference, `/policies/new` shows an honest blocked state (verification checklist, no create action). The form, compiler and `POST /api/policies` are fully built and tested with injected fixtures, and go live unchanged once AAPLx passes the live check and is seeded.
 - **Status:** execution `PENDING_JUPITER_VERIFICATION`. `verification.pythLiveCheck` = **`NOT_ENTITLED`**: the current key gets 403 for equity feeds and only reads crypto feeds. `pnpm db:seed` therefore skips AAPLx, and Neon has no assets until an equity-entitled key passes `pnpm test:live` and the config is updated to `PASSED`.
 
 **Jupiter (`src/integrations/jupiter/`)**

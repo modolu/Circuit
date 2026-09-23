@@ -11,12 +11,14 @@ interface NavItem {
   label: string;
   /** Omitted until the route exists. Unbuilt destinations render disabled, never as fake links. */
   href?: string;
+  /** Extra path prefixes that count as this item being active. */
+  activePrefixes?: string[];
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
   { label: "Markets" },
-  { label: "New policy" },
-  { label: "Policies", href: "/dashboard" },
+  { label: "New policy", href: "/policies/new" },
+  { label: "Policies", href: "/dashboard", activePrefixes: ["/policies/"] },
   { label: "Activity" },
 ];
 
@@ -39,7 +41,9 @@ function NavLinks({ pathname, stacked = false }: { pathname: string; stacked?: b
             </li>
           );
         }
-        const active = pathname === item.href;
+        const active =
+          pathname === item.href ||
+          (item.activePrefixes?.some((prefix) => pathname.startsWith(prefix)) && pathname !== "/policies/new");
         return (
           <li key={item.label}>
             <Link
