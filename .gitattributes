@@ -1,0 +1,7 @@
+# Normalize line endings for text files.
+* text=auto eol=lf
+
+# The source-of-truth docs use Markdown hard line breaks (two trailing spaces).
+# They must not be rewritten, so `git diff --check` ignores trailing spaces in them only.
+CIRCUIT_ARCHITECTURE.md whitespace=-blank-at-eol
+CIRCUIT_PRODUCT_BRIEF.md whitespace=-blank-at-eol

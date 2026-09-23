@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# next.js
+.next/
+out/
+build/
+next-env.d.ts
+*.tsbuildinfo
+
+# testing
+coverage/
+playwright-report/
+test-results/
+
+# env files: only the documented template is committed
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+!.env.example
+
+# secrets and keys
+*.pem
+
+# vercel
+.vercel
+
+# debug
+npm-debug.log*
+.pnpm-debug.log*
+
+# os
+.DS_Store
