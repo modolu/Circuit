@@ -39,8 +39,8 @@ Precedence when they conflict: **ARCHITECTURE > PRODUCT BRIEF > CLAUDE.md**, exc
 | Language | TypeScript 5.x, `strict: true` plus `noUncheckedIndexedAccess` and `noImplicitOverride` |
 | Styling | Tailwind CSS 4 (CSS-first config) |
 | Primitives | Radix UI, only where an accessibility primitive is needed (dialog, popover, select, tooltip) |
-| Database | Neon PostgreSQL (free tier) |
-| ORM / migrations | Drizzle ORM + drizzle-kit |
+| Database | Neon PostgreSQL (free tier; server reports PostgreSQL 18.6) |
+| ORM / migrations | `drizzle-orm` 0.45.3 + `drizzle-kit` 0.31.11, `@neondatabase/serverless` 1.1.0 (`neon-serverless` Pool driver). Tests: `@electric-sql/pglite` 0.5.8 (in-process Postgres, dev-only). |
 | Validation | Zod 4 at every external boundary |
 | Money | `bigint` for atomic token amounts, `decimal.js` for USD values. Never `number` for money. |
 | Wallet | `@solana/wallet-adapter-base`, `@solana/wallet-adapter-react`, `@solana/wallet-adapter-react-ui` with Wallet Standard discovery via `wallets={[]}`. **Do not add `@solana/wallet-adapter-wallets`.** (Installed when wallet work begins.) |
@@ -123,6 +123,7 @@ Dependency direction: `UI / route handlers → services → domain`, and `servic
 - Services take explicit dependencies (repositories, provider adapters, clock, id generator) so tests can inject fakes. No hidden module-level singletons in domain or services.
 - Inject time (`now: Date`) into domain functions. Never call `Date.now()` inside domain code.
 - Named exports only, except where Next.js requires a default export (`page.tsx`, `layout.tsx`).
+- Inside `src/`, import other `src/` modules by **relative path with a `.ts` extension** (`../db/schema.ts`), not `@/…`. Node 22 runs scripts such as `src/db/migrate.ts` natively (type stripping), and it needs explicit extensions and no path aliases. `app/`, `components/` and `tests/` may use `@/…`.
 - Follow an existing pattern before creating a new abstraction. No speculative generality and no unrelated refactors inside a milestone.
 - Comments explain *why*, not *what*. Link provider docs when encoding provider-specific behaviour.
 
@@ -254,7 +255,10 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
 **Database (Neon)**
 - Use `@neondatabase/serverless` with Drizzle's **`neon-serverless`** driver (Pool/WebSocket) for flows that need interactive transactions and row locks: policy creation, arming, and reconciliation (`SELECT … FOR UPDATE` / compare-and-set).
 - **Do not use `neon-http`** for transaction-sensitive flows.
-- Do not install `ws` pre-emptively. Node 22 ships a global `WebSocket`, so verify it works with the Neon driver first and add `ws` only if it doesn't.
+- Verified in Task 2: Node 22's global `WebSocket` works with the Neon `Pool`, so `ws` is **not** installed.
+- `src/db/client.ts` connects lazily on first `getDb()` call, so importing it never contacts Neon and `next build`/unit tests stay offline.
+- Repositories take a `DbExecutor` (database or open transaction) as their first argument. Services own transaction scope: `getDb().transaction(tx => …)`.
+- `policy_events` is append-only, enforced by database triggers that reject UPDATE, DELETE and TRUNCATE. Record corrections as new events.
 - Expect Neon free-tier cold starts, and do not treat the first slow query as an outage.
 
 ## 13. Commands
@@ -268,12 +272,12 @@ Scripts marked ✅ exist and work. The others are added in the milestone that in
 | ✅ Lint | `pnpm lint` (ESLint CLI with `--max-warnings=0`; Next.js 16 no longer ships `next lint`) |
 | ✅ Typecheck | `pnpm typecheck` (`next typegen && tsc --noEmit`; typegen creates the route types `tsc` needs) |
 | ✅ Unit + service tests | `pnpm test` (Vitest run) / `pnpm test:watch` |
-| Integration tests (isolated Postgres) | `pnpm test:integration` |
+| ✅ Repository tests (isolated in-process Postgres) | included in `pnpm test`; `tests/integration/` runs the committed migrations on PGlite, never Neon |
 | E2E | `pnpm test:e2e` (Playwright, mock wallet + mock Jupiter) |
 | ✅ Build | `pnpm build` |
-| Generate migration | `pnpm db:generate` (drizzle-kit generate) |
-| Apply migrations | `pnpm db:migrate` (drizzle-kit migrate) |
-| Seed catalog | `pnpm db:seed` (runs `src/db/seed.ts`; verified assets only, execution disabled until verified) |
+| ✅ Generate migration | `pnpm db:generate` (drizzle-kit generate from `src/db/schema.ts` into `src/db/migrations/`; `--custom --name x` for hand-written SQL such as triggers) |
+| ✅ Apply migrations | `pnpm db:migrate` (`src/db/migrate.ts`: Drizzle migrator over the Neon WebSocket driver; prints database name and tables, never the URL) |
+| ✅ Seed catalog | `pnpm db:seed` (`src/db/seed.ts`: upserts only entries in `src/config/assets.ts`, which is empty until assets are verified) |
 | Pre-commit gate | `pnpm typecheck && pnpm lint && pnpm test && pnpm build && git diff --check` |
 
 Never run `db:migrate` against production without the user's explicit go-ahead. Never use `drizzle-kit push` against shared databases.
@@ -325,7 +329,7 @@ Never ask the user to paste secrets into chat. Point them to `.env.local` or `ve
 - The highest-risk code is anything that can compile the wrong price, spend the wrong amount, reverse buy/sell, mis-map provider state, or claim a fill that didn't happen. That code gets the most tests.
 - Every policy behaviour change comes with unit tests. The domain has no mocks because it is pure.
 - Service tests use injected fakes for repositories and providers, and cover the Architecture §23 list (stale reference blocks relative compile, ownership enforced, never ARMED before provider success, idempotent arm, reconcile terminalizes once, cancel only after confirmation).
-- Integration tests use an isolated Postgres (a Neon branch or local container), never the production database.
+- Integration tests use an isolated Postgres (PGlite in-process, or a Neon branch if ever needed), never the production database. Test fixtures use unmistakably fictional values (`TEST_MINT_NOT_REAL_…`) and live only under `tests/`.
 - External APIs use fixtures by default. One opt-in live provider test may run manually and never runs in CI.
 - Playwright covers the critical path with mock wallet + mock provider: create draft → review → arm → ARMED → mocked fill → reconcile → EXECUTED.
 
@@ -355,6 +359,8 @@ Demo-ready means **all** of the following hold on the deployed Vercel URL. `live
 | Background sync | Vercel Cron once per minute (Arch §2, §25) | Reconcile on page load, manual refresh, and after cancel. Cron route kept for manual/daily backstop only. | Vercel Hobby cannot be assumed to support minute-level cron. Free-tier constraint. |
 | Jupiter mode switch | Not specified | `CIRCUIT_JUPITER_MODE=mock\|live` env var plus a mock adapter. A deployed build may run mock if clearly labelled SIMULATED (§11). | Enables e2e, local dev, and an honest demo without mainnet funds. Needs a matching update to Arch §19 when implemented. |
 | `JUPITER_API_KEY` | Listed as required | Required only in `live` mode | Mock mode must run without provider credentials. |
+| `policy_events` columns | id, policy_id, event_type, source, payload, created_at | Adds `sequence_number` (bigint identity). `created_at` defaults to `clock_timestamp()`. Events are ordered by (created_at, sequence_number). | Several events written in one transaction can share a timestamp, so the audit trail needs a database-assigned tie-breaker to keep insertion order. |
+| Policy checks | Constraints listed in Arch §5.3 | Also: `max_slippage_bps` between 0 and 10000 (structural bound only), non-negative execution amounts, `decimals` 0–255 | Cheap structural guards. The product's allowed slippage range is still decided in Milestone 3. |
 
 These should be recorded in `CIRCUIT_ARCHITECTURE.md` when the user authorizes editing it.
 

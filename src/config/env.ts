@@ -15,6 +15,11 @@ const optional = <T extends z.ZodType>(schema: T) =>
 
 const secret = z.string().min(1);
 
+// Postgres connection string. Validation messages never echo the value.
+const postgresUrl = z
+  .url()
+  .refine((value) => /^postgres(ql)?:\/\//.test(value), "must be a postgres:// or postgresql:// URL");
+
 export const JUPITER_MODES = ["mock", "live"] as const;
 export type JupiterMode = (typeof JUPITER_MODES)[number];
 
@@ -22,7 +27,7 @@ export const SOLANA_CLUSTERS = ["mainnet-beta", "devnet", "testnet"] as const;
 
 const serverEnvSchema = z
   .object({
-    DATABASE_URL: optional(z.url()),
+    DATABASE_URL: optional(postgresUrl),
     CIRCUIT_SESSION_SECRET: optional(secret),
     CIRCUIT_TOKEN_ENCRYPTION_KEY: optional(secret),
     JUPITER_API_KEY: optional(secret),
@@ -78,6 +83,15 @@ let cachedServerEnv: ServerEnv | undefined;
 export function getServerEnv(): ServerEnv {
   cachedServerEnv ??= parseServerEnv(process.env);
   return cachedServerEnv;
+}
+
+/** For database code only. Throws a value-free error when the URL is absent. */
+export function getDatabaseUrl(): string {
+  const url = getServerEnv().DATABASE_URL;
+  if (!url) {
+    throw new Error("DATABASE_URL is not set. Add it to .env.local (never commit it).");
+  }
+  return url;
 }
 
 export function getPublicEnv(): PublicEnv {
