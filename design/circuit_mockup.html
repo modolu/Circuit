@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Circuit — Mockups</title>
+<style>
+:root{
+  --bg:#0A0B0D;--p1:#111316;--p2:#16191D;--p3:#1C2025;
+  --ln:#23272E;--ln2:#2E333B;
+  --tx:#E7E5E0;--mu:#8B9099;--dim:#5C616A;
+  --ac:#E3A857;--acd:rgba(227,168,87,.12);
+  --ok:#5FC08A;--okd:rgba(95,192,138,.12);
+  --bad:#E5616A;--badd:rgba(229,97,106,.12);
+  --wa:#D9B64A;--wad:rgba(217,182,74,.12);
+  --info:#7FA7E0;--infod:rgba(127,167,224,.12);
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14px;-webkit-font-smoothing:antialiased}
+.mono{font-family:var(--mono);font-feature-settings:"tnum"}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input,select{font:inherit;color:var(--tx)}
+a{color:inherit}
+
+/* ---------- top bar ---------- */
+.top{height:56px;display:flex;align-items:center;gap:28px;padding:0 24px;border-bottom:1px solid var(--ln);background:var(--bg);position:sticky;top:0;z-index:20}
+.logo{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.14em;font-size:13px}
+.nav{display:flex;gap:4px}
+.nav button{padding:7px 12px;border-radius:6px;color:var(--mu);font-size:13px;transition:.15s}
+.nav button:hover{color:var(--tx);background:var(--p2)}
+.nav button.on{color:var(--tx);background:var(--p3)}
+.sp{flex:1}
+.pill{display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--ln);border-radius:999px;font-size:12px;color:var(--mu)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--okd)}
+.dot.pulse{animation:pl 2s infinite}
+@keyframes pl{50%{box-shadow:0 0 0 6px rgba(95,192,138,0)}}
+
+/* ---------- layout ---------- */
+.screen{display:none;max-width:1180px;margin:0 auto;padding:32px 24px 96px;animation:fi .25s ease}
+.screen.on{display:block}
+@keyframes fi{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+h1{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.sub{color:var(--mu);margin-top:6px;font-size:13px}
+.hd{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:24px;gap:16px}
+.card{background:var(--p1);border:1px solid var(--ln);border-radius:10px}
+.lbl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:500}
+.btn{padding:10px 16px;border-radius:7px;font-weight:500;font-size:13px;transition:.15s;border:1px solid var(--ln2)}
+.btn:hover{border-color:var(--mu)}
+.btn.pri{background:var(--ac);color:#17110A;border-color:var(--ac)}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.pri:disabled{opacity:.4;cursor:not-allowed}
+.btn.dng{color:var(--bad);border-color:rgba(229,97,106,.35)}
+.btn.dng:hover{background:var(--badd)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:5px;font-size:11px;font-family:var(--mono);letter-spacing:.04em;font-weight:500}
+.chip::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
+.c-ok{color:var(--ok);background:var(--okd)}
+.c-ac{color:var(--ac);background:var(--acd)}
+.c-bad{color:var(--bad);background:var(--badd)}
+.c-wa{color:var(--wa);background:var(--wad)}
+.c-mu{color:var(--mu);background:var(--p3)}
+.c-info{color:var(--info);background:var(--infod)}
+
+/* ---------- connect ---------- */
+.hero{min-height:calc(100vh - 56px);display:grid;grid-template-columns:1.1fr 1fr;gap:56px;align-items:center;max-width:1180px;margin:0 auto;padding:0 24px}
+.hero h2{font-size:44px;line-height:1.08;letter-spacing:-.025em;font-weight:600}
+.hero h2 em{font-style:normal;color:var(--ac)}
+.hero p{color:var(--mu);font-size:16px;line-height:1.6;margin:20px 0 32px;max-width:460px}
+.steps4{display:flex;gap:0;margin-top:40px;border-top:1px solid var(--ln);padding-top:20px}
+.steps4 div{flex:1;font-size:12px;color:var(--mu);padding-right:12px}
+.steps4 b{display:block;font-family:var(--mono);color:var(--tx);font-weight:500;font-size:12px;margin-bottom:4px;letter-spacing:.06em}
+.diag{padding:24px;position:relative;overflow:hidden}
+.diag::before{content:"";position:absolute;inset:0;background-image:linear-gradient(var(--ln) 1px,transparent 1px),linear-gradient(90deg,var(--ln) 1px,transparent 1px);background-size:24px 24px;opacity:.35;pointer-events:none}
+.flow{position:relative;display:flex;flex-direction:column;gap:10px}
+.fnode{display:flex;align-items:center;justify-content:space-between;background:var(--p2);border:1px solid var(--ln2);border-radius:8px;padding:12px 14px;font-size:13px}
+.fnode span:last-child{font-family:var(--mono);font-size:11px;color:var(--mu)}
+.fnode.hl{border-color:rgba(227,168,87,.5);background:linear-gradient(90deg,var(--acd),var(--p2))}
+.farr{height:14px;margin-left:22px;border-left:1px dashed var(--ln2);position:relative}
+.farr::after{content:"";position:absolute;left:-3px;bottom:-1px;width:5px;height:5px;border-radius:50%;background:var(--ac);animation:tr 1.6s infinite}
+@keyframes tr{0%{bottom:14px;opacity:0}30%{opacity:1}100%{bottom:-1px;opacity:0}}
+
+/* ---------- markets ---------- */
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:500;padding:12px 16px;border-bottom:1px solid var(--ln)}
+td{padding:16px;border-bottom:1px solid var(--ln);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tbody tr{transition:.12s}
+tbody tr.act:hover{background:var(--p2);cursor:pointer}
+tbody tr.off{opacity:.5}
+.tk{display:flex;align-items:center;gap:12px}
+.tkic{width:34px;height:34px;border-radius:8px;background:var(--p3);border:1px solid var(--ln2);display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ac)}
+.tk b{font-weight:600;display:block}
+.tk small{color:var(--mu);font-size:12px}
+.mint{font-family:var(--mono);font-size:12px;color:var(--mu);display:flex;align-items:center;gap:6px}
+.chk{color:var(--ok)}
+.num{font-family:var(--mono);font-size:14px}
+.fr{font-size:11px;color:var(--mu);font-family:var(--mono);margin-top:3px}
+.note{margin-top:14px;font-size:12px;color:var(--dim);display:flex;gap:8px;align-items:flex-start;line-height:1.5}
+
+/* ---------- create ---------- */
+.grid2{display:grid;grid-template-columns:1fr 400px;gap:20px;align-items:start}
+.form{padding:24px;display:flex;flex-direction:column;gap:22px}
+.field{display:flex;flex-direction:column;gap:8px}
+.field .lbl{display:flex;justify-content:space-between}
+.inp{display:flex;align-items:center;background:var(--p2);border:1px solid var(--ln2);border-radius:7px;padding:0 12px;height:42px;transition:.15s}
+.inp:focus-within{border-color:var(--ac)}
+.inp input,.inp select{flex:1;background:none;border:0;outline:0;height:100%;font-family:var(--mono);font-size:14px}
+.inp select{font-family:var(--sans);appearance:none;cursor:pointer}
+.inp select option{background:var(--p2)}
+.inp .u{color:var(--mu);font-size:12px;font-family:var(--mono)}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.seg.s2{grid-template-columns:1fr 1fr}
+.seg.s3{grid-template-columns:repeat(3,1fr)}
+.seg button{padding:10px 8px;border-radius:7px;border:1px solid var(--ln2);background:var(--p2);font-size:12px;color:var(--mu);text-align:left;transition:.12s}
+.seg button b{display:block;color:var(--tx);font-weight:500;font-size:13px;margin-bottom:2px}
+.seg button.on{border-color:var(--ac);background:var(--acd);color:var(--tx)}
+.seg.sm button{text-align:center;padding:9px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.hint{font-size:12px;color:var(--mu)}
+.hint.warn{color:var(--wa)}
+.review{position:sticky;top:76px}
+.rvh{padding:16px 20px;border-bottom:1px solid var(--ln);display:flex;justify-content:space-between;align-items:center}
+.rvb{padding:4px 20px}
+.rvr{display:flex;justify-content:space-between;align-items:baseline;padding:12px 0;border-bottom:1px dashed var(--ln)}
+.rvr:last-child{border-bottom:0}
+.rvr .k{font-size:12px;color:var(--mu)}
+.rvr .v{font-family:var(--mono);text-align:right}
+.rvr .v small{display:block;font-size:11px;color:var(--mu);margin-top:2px}
+.big{font-size:20px}
+.ladder{margin:4px 20px 16px;padding:14px;background:var(--p2);border-radius:8px;border:1px solid var(--ln)}
+.lad{position:relative;height:6px;background:var(--p3);border-radius:3px;margin:22px 0 22px}
+.lad .m{position:absolute;top:-8px;width:2px;height:22px;border-radius:1px}
+.lad .m span{position:absolute;top:-18px;transform:translateX(-50%);font-size:10px;font-family:var(--mono);white-space:nowrap}
+.lad .m.b span{top:24px}
+.lad .zone{position:absolute;top:0;bottom:0;background:var(--acd);border-radius:3px}
+.expl{margin:0 20px 16px;padding:14px;border-left:2px solid var(--ac);background:var(--p2);font-size:12.5px;line-height:1.6;color:#C9C6BF;border-radius:0 6px 6px 0}
+.rvf{padding:16px 20px;border-top:1px solid var(--ln);display:flex;flex-direction:column;gap:10px}
+.enf{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 20px 16px}
+.enf div{padding:10px;border:1px solid var(--ln);border-radius:7px;font-size:11px;color:var(--mu);line-height:1.45}
+.enf b{display:block;color:var(--tx);font-size:12px;font-weight:500;margin-bottom:3px}
+
+/* ---------- modal ---------- */
+.ov{position:fixed;inset:0;background:rgba(5,6,8,.72);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:50}
+.ov.on{display:flex}
+.modal{width:480px;max-width:92vw;padding:24px}
+.sm-states{display:flex;gap:6px;margin:18px 0 22px}
+.sm-states div{flex:1;padding:8px;text-align:center;font-family:var(--mono);font-size:11px;border-radius:6px;border:1px solid var(--ln);color:var(--dim);transition:.3s}
+.sm-states div.cur{border-color:var(--ac);color:var(--ac);background:var(--acd)}
+.sm-states div.done{color:var(--mu)}
+.sm-states div.ok{border-color:rgba(95,192,138,.5);color:var(--ok);background:var(--okd)}
+.stp{display:flex;gap:12px;padding:10px 0;font-size:13px;color:var(--dim);transition:.2s}
+.stp i{width:20px;height:20px;border-radius:50%;border:1px solid var(--ln2);flex:none;display:grid;place-items:center;font-style:normal;font-size:11px}
+.stp.run{color:var(--tx)}
+.stp.run i{border-color:var(--ac);border-top-color:transparent;animation:sp .8s linear infinite}
+.stp.dn{color:var(--mu)}
+.stp.dn i{border-color:var(--ok);background:var(--okd);color:var(--ok)}
+.stp small{display:block;font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ---------- policies ---------- */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat{padding:16px}
+.stat .num{font-size:22px;margin-top:6px}
+.stat small{color:var(--mu);font-size:12px}
+.plist{display:flex;flex-direction:column}
+.pol{display:grid;grid-template-columns:200px 1.1fr 1.4fr 130px 110px;gap:20px;align-items:center;padding:18px 20px;border-bottom:1px solid var(--ln)}
+.pol:last-child{border-bottom:0}
+.pol .rule{font-family:var(--mono);font-size:13px}
+.pol .rule small{display:block;color:var(--mu);font-size:11px;margin-top:3px}
+.dist{font-size:11px;font-family:var(--mono);color:var(--mu)}
+.dbar{height:4px;background:var(--p3);border-radius:2px;margin-top:6px;position:relative;overflow:hidden}
+.dbar div{position:absolute;left:0;top:0;bottom:0;background:var(--ac);border-radius:2px}
+.flt{display:flex;gap:6px}
+.flt button{padding:6px 10px;border-radius:6px;font-size:12px;color:var(--mu);border:1px solid var(--ln)}
+.flt button.on{color:var(--tx);border-color:var(--ln2);background:var(--p3)}
+.pol.new{animation:hl 2.4s ease}
+@keyframes hl{0%{background:var(--acd)}100%{background:transparent}}
+
+/* ---------- receipt ---------- */
+.rgrid{display:grid;grid-template-columns:1fr 380px;gap:20px;align-items:start}
+.rhead{padding:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:20px;border-bottom:1px solid var(--ln)}
+.rhead .num{font-size:18px;margin-top:6px}
+.rhead small{display:block;color:var(--mu);font-size:11px;font-family:var(--mono);margin-top:3px}
+.tl{padding:8px 24px 24px}
+.ev{display:grid;grid-template-columns:130px 20px 1fr;gap:14px;padding:14px 0;position:relative}
+.ev .t{font-family:var(--mono);font-size:11px;color:var(--mu);padding-top:2px;text-align:right}
+.ev .n{position:relative;display:flex;justify-content:center}
+.ev .n::before{content:"";position:absolute;top:0;bottom:-28px;width:1px;background:var(--ln2)}
+.ev:last-child .n::before{display:none}
+.ev .n i{width:11px;height:11px;border-radius:50%;background:var(--bg);border:2px solid var(--ln2);margin-top:3px;position:relative;z-index:1}
+.ev.k .n i{border-color:var(--ac)}
+.ev.g .n i{border-color:var(--ok);background:var(--ok)}
+.ev b{font-weight:500;font-size:13px}
+.ev .src{font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:8px;letter-spacing:.06em}
+.ev p{color:var(--mu);font-size:12px;margin-top:4px;line-height:1.5}
+.ev code{font-family:var(--mono);font-size:11px;background:var(--p2);border:1px solid var(--ln);padding:2px 6px;border-radius:4px;color:var(--tx)}
+.side{display:flex;flex-direction:column;gap:16px}
+.cmp{padding:20px}
+.cmpb{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.bar{display:grid;grid-template-columns:90px 1fr 80px;align-items:center;gap:10px;font-size:12px}
+.bar .tr{height:8px;background:var(--p3);border-radius:4px;position:relative}
+.bar .tr div{position:absolute;top:0;bottom:0;left:0;border-radius:4px}
+.json{font-family:var(--mono);font-size:11.5px;line-height:1.7;padding:16px 20px;color:var(--mu);white-space:pre;overflow:auto}
+.json .k{color:#A9B7C9}.json .s{color:var(--ac)}.json .n2{color:var(--ok)}
+
+/* ---------- mockup switcher ---------- */
+.sw{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:2px;padding:4px;background:rgba(22,25,29,.92);border:1px solid var(--ln2);border-radius:10px;z-index:40;backdrop-filter:blur(8px)}
+.sw span{font-size:10px;letter-spacing:.1em;color:var(--dim);padding:8px 10px 8px 8px;font-family:var(--mono)}
+.sw button{padding:7px 11px;border-radius:7px;font-size:12px;color:var(--mu)}
+.sw button.on{background:var(--p3);color:var(--tx)}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<header class="top" id="top">
+  <div class="logo">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="1" y="1" width="20" height="20" rx="5" stroke="#E3A857" stroke-width="1.4"/><path d="M6 11h4l2-4 2 8 1.5-4H17" stroke="#E3A857" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    CIRCUIT
+  </div>
+  <nav class="nav" id="nav">
+    <button data-go="markets">Markets</button>
+    <button data-go="create">New policy</button>
+    <button data-go="policies">Policies</button>
+    <button data-go="receipt">Activity</button>
+  </nav>
+  <div class="sp"></div>
+  <div class="pill mono" id="netpill"><span class="dot"></span>Solana Mainnet</div>
+  <div class="pill mono" id="wallet">◎ 7xKX…9fQ2</div>
+</header>
+
+<!-- ============ CONNECT ============ -->
+<section class="screen" id="s-connect" style="max-width:none;padding:0">
+  <div class="hero">
+    <div>
+      <div class="lbl" style="color:var(--ac);margin-bottom:18px">Policy-controlled execution · Solana</div>
+      <h2>Stocks that never sleep.<br><em>Execution that doesn't need you awake.</em></h2>
+      <p>Define a bounded rule for a tokenized stock once. Circuit checks it against independent equity reference data, compiles it into an autonomous order, and shows you exactly what happened.</p>
+      <div style="display:flex;gap:10px">
+        <button class="btn pri" style="padding:12px 20px" onclick="connect()">Connect Solana wallet</button>
+        <button class="btn" style="padding:12px 20px" onclick="go('markets')">Browse supported stocks</button>
+      </div>
+      <div class="steps4">
+        <div><b>01 DEFINE</b>Asset, amount, trigger, slippage, expiry</div>
+        <div><b>02 AUTHORIZE</b>Your wallet signs one bounded order</div>
+        <div><b>03 EXECUTE</b>Runs 24/7, browser closed</div>
+        <div><b>04 EVIDENCE</b>Onchain receipt + audit trail</div>
+      </div>
+    </div>
+    <div class="card diag">
+      <div class="flow">
+        <div class="fnode"><span>User intent</span><span>you decide</span></div><div class="farr"></div>
+        <div class="fnode hl"><span>Circuit policy</span><span>bounded · deterministic</span></div><div class="farr"></div>
+        <div class="fnode"><span>Reference + validation</span><span>Pyth equity feed</span></div><div class="farr"></div>
+        <div class="fnode"><span>Trigger order</span><span>Jupiter Trigger V2</span></div><div class="farr"></div>
+        <div class="fnode"><span>Onchain fill</span><span>Solana tx</span></div><div class="farr"></div>
+        <div class="fnode hl"><span>Audit trail</span><span>every transition logged</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MARKETS ============ -->
+<section class="screen" id="s-markets">
+  <div class="hd">
+    <div><h1>Supported stock tokens</h1><div class="sub">Only assets with a verified mint, a routable execution path and a matching reference feed can be used in a policy.</div></div>
+    <div class="pill mono"><span class="dot pulse"></span>Reference data live</div>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr><th>Asset</th><th>Verified mint</th><th>Reference (Pyth)</th><th>Freshness</th><th>Execution route</th><th></th></tr></thead>
+      <tbody id="mkt"></tbody>
+    </table>
+  </div>
+  <div class="note"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex:none;margin-top:2px"><circle cx="7" cy="7" r="6" stroke="currentColor"/><path d="M7 6v4M7 4v.01" stroke="currentColor" stroke-linecap="round"/></svg>Mints are resolved from a verified registry — never inferred from a ticker. Carried prices (outside the underlying market's session) are labeled and cannot be used to compile relative triggers.</div>
+</section>
+
+<!-- ============ CREATE ============ -->
+<section class="screen" id="s-create">
+  <div class="hd">
+    <div><h1>New policy</h1><div class="sub">Every field is explicit. Nothing is executed until you authorize it in your wallet.</div></div>
+    <span class="chip c-mu">DRAFT</span>
+  </div>
+  <div class="grid2">
+    <div class="card form">
+      <div class="field">
+        <div class="lbl"><span>Asset</span><span id="f-mint" class="mono" style="text-transform:none;letter-spacing:0"></span></div>
+        <div class="inp"><select id="f-asset"></select><span class="u" id="f-assetref"></span></div>
+      </div>
+
+      <div class="field">
+        <div class="lbl">Policy type</div>
+        <div class="seg" id="f-type">
+          <button data-v="buy-below"><b>Buy below</b>Price falls to</button>
+          <button data-v="buy-above"><b>Buy above</b>Price rises to</button>
+          <button data-v="sell-above"><b>Sell above</b>Take profit at</button>
+          <button data-v="sell-below"><b>Sell below</b>Stop at</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="lbl"><span id="f-amtlbl">Budget</span><span id="f-bal" class="mono" style="text-transform:none;letter-spacing:0"></span></div>
+        <div class="inp"><input id="f-amt" type="number" step="any"><span class="u" id="f-amtu">USDC</span></div>
+      </div>
+
+      <div class="field">
+        <div class="lbl">Trigger</div>
+        <div class="seg s2 sm" id="f-mode">
+          <button data-v="abs">Fixed USD price</button>
+          <button data-v="rel">% from current reference</button>
+        </div>
+        <div class="inp" id="w-abs"><span class="u" style="margin-right:6px">$</span><input id="f-trig" type="number" step="0.01"><span class="u">USD</span></div>
+        <div class="inp hide" id="w-rel"><input id="f-pct" type="number" step="0.1"><span class="u">% from $<span id="f-refx"></span></span></div>
+        <div class="hint" id="f-trighint"></div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <div class="lbl">Max slippage</div>
+          <div class="seg s3 sm" id="f-slip">
+            <button data-v="25">0.25%</button><button data-v="50">0.50%</button><button data-v="100">1.00%</button>
+          </div>
+        </div>
+        <div class="field">
+          <div class="lbl">Expiry</div>
+          <div class="seg s3 sm" id="f-exp">
+            <button data-v="24">24h</button><button data-v="72">3d</button><button data-v="168">7d</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- REVIEW -->
+    <div class="card review">
+      <div class="rvh"><span class="lbl">Policy review</span><span class="chip c-ac" id="r-name">BUY THE DIP</span></div>
+      <div class="rvb">
+        <div class="rvr"><span class="k">Current reference</span><span class="v big" id="r-ref"></span></div>
+        <div class="rvr"><span class="k">Target</span><span class="v big" id="r-trig"></span></div>
+        <div class="rvr"><span class="k" id="r-amtk">Maximum capital</span><span class="v" id="r-amt"></span></div>
+        <div class="rvr"><span class="k">Max slippage</span><span class="v" id="r-slip"></span></div>
+        <div class="rvr"><span class="k">Expires</span><span class="v" id="r-exp"></span></div>
+        <div class="rvr"><span class="k">Execution rail</span><span class="v">Jupiter Trigger<small>USD price trigger</small></span></div>
+      </div>
+      <div class="ladder">
+        <div class="lbl" style="font-size:10px">Trigger distance</div>
+        <div class="lad" id="r-lad"></div>
+      </div>
+      <div class="expl" id="r-expl"></div>
+      <div class="enf">
+        <div><b>Circuit validates</b>Feed freshness, compiled trigger, policy bounds</div>
+        <div><b>Jupiter enforces</b>Trigger condition, routing, slippage, fill</div>
+      </div>
+      <div class="rvf">
+        <button class="btn pri" id="armbtn" onclick="arm()">Authorize &amp; arm policy</button>
+        <div class="hint" style="text-align:center">Your wallet will sign one order. Cancel anytime before it fills.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ POLICIES ============ -->
+<section class="screen" id="s-policies">
+  <div class="hd">
+    <div><h1>Policies</h1><div class="sub">State reconciled against Jupiter order status. Circuit never marks a policy executed on its own.</div></div>
+    <button class="btn pri" onclick="go('create')">+ New policy</button>
+  </div>
+  <div class="stats">
+    <div class="card stat"><div class="lbl">Armed</div><div class="num" id="st-armed">2</div><small>running without this tab</small></div>
+    <div class="card stat"><div class="lbl">Capital committed</div><div class="num" id="st-cap">$150.00</div><small>max across armed policies</small></div>
+    <div class="card stat"><div class="lbl">Executed · 30d</div><div class="num">1</div><small>100.00 USDC → 0.5522 NVDAx</small></div>
+    <div class="card stat"><div class="lbl">Last reconcile</div><div class="num">4s ago</div><small>provider: Jupiter</small></div>
+  </div>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--ln)">
+      <div class="flt" id="flt"><button class="on" data-f="all">All</button><button data-f="ARMED">Armed</button><button data-f="EXECUTED">Executed</button><button data-f="closed">Closed</button></div>
+      <span class="hint mono">sorted by last event</span>
+    </div>
+    <div class="plist" id="plist"></div>
+  </div>
+</section>
+
+<!-- ============ RECEIPT ============ -->
+<section class="screen" id="s-receipt">
+  <div class="hd">
+    <div>
+      <div style="display:flex;gap:10px;align-items:center"><h1>Buy the dip · NVDAx</h1><span class="chip c-ok">EXECUTED</span></div>
+      <div class="sub mono">policy crc_0417 · jupiter order 4fTq…Wm2B</div>
+    </div>
+    <div style="display:flex;gap:8px"><button class="btn">Export JSON</button><button class="btn">View on explorer ↗</button></div>
+  </div>
+  <div class="rgrid">
+    <div class="card">
+      <div class="rhead">
+        <div><div class="lbl">Input</div><div class="num">100.00 USDC</div><small>max authorized: 100.00</small></div>
+        <div><div class="lbl">Output</div><div class="num">0.552212 NVDAx</div><small>received in wallet</small></div>
+        <div><div class="lbl">Avg execution</div><div class="num">$181.09</div><small>trigger ≤ $181.00</small></div>
+        <div><div class="lbl">Filled at</div><div class="num">02:18:41</div><small>2026-09-22 · UTC</small></div>
+      </div>
+      <div style="padding:20px 24px 0" class="lbl">Audit trail</div>
+      <div class="tl">
+        <div class="ev"><div class="t">09-21 14:30:02</div><div class="n"><i></i></div><div><b>Policy drafted</b><span class="src">CIRCUIT</span><p>Buy below · 100 USDC · trigger “−1.74% from reference” · slippage 50 bps · expiry 24h</p></div></div>
+        <div class="ev k"><div class="t">09-21 14:30:03</div><div class="n"><i></i></div><div><b>Reference snapshot captured</b><span class="src">PYTH</span><p>NVDA/USD <code>$184.20</code> · publish time 14:30:02.4 UTC · age 0.6s · <span style="color:var(--ok)">fresh</span></p></div></div>
+        <div class="ev k"><div class="t">09-21 14:30:03</div><div class="n"><i></i></div><div><b>Policy compiled</b><span class="src">CIRCUIT</span><p>Relative expression resolved to fixed trigger <code>$181.00</code> · amount <code>100000000</code> (6 dp) · slippageBps <code>50</code></p></div></div>
+        <div class="ev"><div class="t">09-21 14:30:19</div><div class="n"><i></i></div><div><b>Wallet authorized deposit</b><span class="src">WALLET</span><p>Signature <code>3kVb…pQ7e</code> · 100 USDC to trigger vault</p></div></div>
+        <div class="ev k"><div class="t">09-21 14:30:24</div><div class="n"><i></i></div><div><b>Order confirmed by provider → ARMED</b><span class="src">JUPITER</span><p>Order <code>4fTq…Wm2B</code> active · expires 09-22 14:30:00 UTC</p></div></div>
+        <div class="ev"><div class="t">09-22 02:18:37</div><div class="n"><i></i></div><div><b>Trigger condition met</b><span class="src">JUPITER</span><p>USD price crossed ≤ $181.00 while user was offline · Pyth reference at that moment: <code>$180.96</code></p></div></div>
+        <div class="ev g"><div class="t">09-22 02:18:41</div><div class="n"><i></i></div><div><b>Filled onchain → EXECUTED</b><span class="src">SOLANA</span><p>Tx <code>5YhN…c2Rk</code> · 100.00 USDC → 0.552212 NVDAx · slot 331,204,118</p></div></div>
+        <div class="ev"><div class="t">09-22 02:18:52</div><div class="n"><i></i></div><div><b>Reconciled</b><span class="src">CIRCUIT</span><p>Provider status and onchain balance delta match. Receipt sealed.</p></div></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="card cmp">
+        <div class="lbl">Reference vs execution</div>
+        <div class="cmpb">
+          <div class="bar"><span class="mono" style="color:var(--mu)">Trigger</span><div class="tr"><div style="width:62%;background:var(--ln2)"></div></div><span class="mono">$181.00</span></div>
+          <div class="bar"><span class="mono" style="color:var(--mu)">Pyth @ fill</span><div class="tr"><div style="width:61%;background:var(--info)"></div></div><span class="mono">$180.96</span></div>
+          <div class="bar"><span class="mono" style="color:var(--mu)">Executed</span><div class="tr"><div style="width:63%;background:var(--ac)"></div></div><span class="mono">$181.09</span></div>
+        </div>
+        <div class="rvr" style="margin-top:12px"><span class="k">Deviation from reference</span><span class="v">+0.07%</span></div>
+        <div class="rvr"><span class="k">Slippage used</span><span class="v">5 of 50 bps</span></div>
+        <div class="rvr"><span class="k">Within policy bounds</span><span class="v" style="color:var(--ok)">✓ all 7</span></div>
+      </div>
+      <div class="card">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--ln);display:flex;justify-content:space-between"><span class="lbl">Agent-readable state</span><span class="chip c-mu">get_policy()</span></div>
+<div class="json">{
+  <span class="k">"id"</span>: <span class="s">"crc_0417"</span>,
+  <span class="k">"status"</span>: <span class="s">"EXECUTED"</span>,
+  <span class="k">"side"</span>: <span class="s">"buy"</span>,
+  <span class="k">"direction"</span>: <span class="s">"below"</span>,
+  <span class="k">"triggerUsd"</span>: <span class="n2">181.00</span>,
+  <span class="k">"inputAmount"</span>: <span class="s">"100000000"</span>,
+  <span class="k">"slippageBps"</span>: <span class="n2">50</span>,
+  <span class="k">"expiresAt"</span>: <span class="s">"2026-09-22T14:30:00Z"</span>,
+  <span class="k">"reference"</span>: {
+    <span class="k">"source"</span>: <span class="s">"pyth"</span>,
+    <span class="k">"price"</span>: <span class="n2">184.20</span>,
+    <span class="k">"publishTime"</span>: <span class="s">"…14:30:02Z"</span>
+  },
+  <span class="k">"fillTx"</span>: <span class="s">"5YhN…c2Rk"</span>
+}</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARMING MODAL -->
+<div class="ov" id="ov">
+  <div class="card modal">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <b style="font-weight:600">Arming policy</b><span class="hint mono" id="m-id">crc_0418</span>
+    </div>
+    <div class="sm-states" id="m-sm"><div>DRAFT</div><div>ARMING</div><div>ARMED</div></div>
+    <div id="m-steps"></div>
+    <div style="display:flex;gap:10px;margin-top:18px" id="m-foot" class="hide">
+      <button class="btn pri" style="flex:1" onclick="closeM();go('policies')">View armed policy</button>
+      <button class="btn" onclick="closeM()">Close tab safely</button>
+    </div>
+  </div>
+</div>
+
+<!-- MOCKUP SWITCHER -->
+<div class="sw" id="sw">
+  <span>SCREENS</span>
+  <button data-go="connect">1 Connect</button>
+  <button data-go="markets">2 Markets</button>
+  <button data-go="create">3 Create</button>
+  <button data-go="policies">4 Policies</button>
+  <button data-go="receipt">5 Receipt</button>
+</div>
+
+<script>
+const A={
+  NVDA:{n:'NVIDIA',sym:'NVDAx',ref:184.20,age:'0.6s',st:'fresh',mint:'Xsc9…pNk1',route:1,bal:0.1840},
+  AAPL:{n:'Apple',sym:'AAPLx',ref:227.35,age:'1.1s',st:'fresh',mint:'XsbE…vU8r',route:1,bal:0.5000},
+  TSLA:{n:'Tesla',sym:'TSLAx',ref:244.10,age:'14h 02m',st:'carried',mint:'XsDo…kZ3c',route:1,bal:0},
+  SPY:{n:'SPDR S&P 500 ETF',sym:'SPYx',ref:571.80,age:'0.9s',st:'fresh',mint:'XsoC…Lh2A',route:0,bal:0}
+};
+const USDC=412.58;
+const S={a:'NVDA',t:'buy-below',amt:100,mode:'abs',trig:181,pct:-1.74,slip:50,exp:24};
+let P=[
+  {id:'crc_0416',a:'AAPL',t:'sell-above',amt:'0.25 AAPLx',trig:240,st:'ARMED',exp:'09-29 09:00 UTC'},
+  {id:'crc_0417',a:'NVDA',t:'buy-below',amt:'100 USDC',trig:181,st:'EXECUTED',exp:'filled 09-22 02:18 UTC'},
+  {id:'crc_0412',a:'TSLA',t:'buy-below',amt:'50 USDC',trig:230,st:'EXPIRED',exp:'09-20 18:00 UTC'},
+  {id:'crc_0409',a:'AAPL',t:'buy-above',amt:'75 USDC',trig:235,st:'FAILED',exp:'deposit tx not confirmed'},
+  {id:'crc_0415',a:'NVDA',t:'sell-below',amt:'0.10 NVDAx',trig:170,st:'ARMED',exp:'09-30 12:00 UTC'},
+];
+let flt='all',nid=418;
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const f2=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const TN={'buy-below':'BUY THE DIP','buy-above':'BREAKOUT BUY','sell-above':'TAKE PROFIT','sell-below':'STOP LOSS'};
+
+function go(s){
+  $$('.screen').forEach(e=>e.classList.toggle('on',e.id==='s-'+s));
+  $$('[data-go]').forEach(b=>b.classList.toggle('on',b.dataset.go===s));
+  $('#nav').style.visibility=$('#wallet').style.visibility=s==='connect'?'hidden':'visible';
+  window.scrollTo(0,0);
+}
+$$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+function connect(){go('markets')}
+
+/* markets */
+function renderM(){
+  $('#mkt').innerHTML=Object.entries(A).map(([k,v])=>{
+    const fr=v.st==='fresh'?`<span class="chip c-ok">FRESH</span><div class="fr">age ${v.age}</div>`:`<span class="chip c-wa">CARRIED</span><div class="fr">last ${v.age} · off-session</div>`;
+    const rt=v.route?`<span class="chip c-ok">ROUTABLE</span><div class="fr">Jupiter · test quote ok</div>`:`<span class="chip c-bad">NO ROUTE</span><div class="fr">hidden from policies</div>`;
+    return `<tr class="${v.route?'act':'off'}" ${v.route?`onclick="S.a='${k}';syncAsset();go('create')"`:''}>
+      <td><div class="tk"><div class="tkic">${k.slice(0,2)}</div><div><b>${v.sym}</b><small>${v.n} · tokenized</small></div></div></td>
+      <td><div class="mint"><span class="chk">✓</span>${v.mint}</div></td>
+      <td><div class="num">$${f2(v.ref)}</div><div class="fr">${k}/USD</div></td>
+      <td>${fr}</td><td>${rt}</td>
+      <td style="text-align:right">${v.route?'<button class="btn">Create policy →</button>':''}</td></tr>`;
+  }).join('');
+}
+
+/* create */
+function seg(id,key,cb){
+  $$(`#${id} button`).forEach(b=>b.onclick=()=>{S[key]=isNaN(+b.dataset.v)?b.dataset.v:+b.dataset.v;cb&&cb();render()});
+}
+function syncAsset(){
+  const v=A[S.a];
+  if(S.mode==='rel'&&v.st!=='fresh')S.mode='abs';
+  S.trig=+(v.ref*(1+S.pct/100)).toFixed(2);
+  if(S.t.startsWith('sell'))S.amt=Math.min(0.1,v.bal)||0.1;
+  $('#f-asset').value=S.a;$('#f-trig').value=S.trig;$('#f-amt').value=S.amt;
+  render();
+}
+function onType(){
+  const v=A[S.a],up=S.t.endsWith('above');
+  S.pct=up?Math.abs(S.pct)||2:-Math.abs(S.pct)||-2;
+  S.trig=+(v.ref*(1+S.pct/100)).toFixed(2);
+  S.amt=S.t.startsWith('buy')?100:0.1;
+  $('#f-trig').value=S.trig;$('#f-pct').value=S.pct;$('#f-amt').value=S.amt;
+}
+function render(){
+  const v=A[S.a],buy=S.t.startsWith('buy'),up=S.t.endsWith('above');
+  $$('#f-type button').forEach(b=>b.classList.toggle('on',b.dataset.v===S.t));
+  $$('#f-mode button').forEach(b=>b.classList.toggle('on',b.dataset.v===S.mode));
+  $$('#f-slip button').forEach(b=>b.classList.toggle('on',+b.dataset.v===S.slip));
+  $$('#f-exp button').forEach(b=>b.classList.toggle('on',+b.dataset.v===S.exp));
+  $('#w-abs').classList.toggle('hide',S.mode!=='abs');
+  $('#w-rel').classList.toggle('hide',S.mode!=='rel');
+  $('#f-mint').innerHTML=`<span style="color:var(--ok)">✓</span> ${v.mint}`;
+  $('#f-assetref').textContent=`ref $${f2(v.ref)}`;
+  $('#f-refx').textContent=f2(v.ref);
+  $('#f-amtlbl').textContent=buy?'Budget':'Amount to sell';
+  $('#f-amtu').textContent=buy?'USDC':v.sym;
+  $('#f-bal').textContent=buy?`balance ${f2(USDC)} USDC`:`balance ${v.bal.toFixed(4)} ${v.sym}`;
+  const trig=S.mode==='rel'?+(v.ref*(1+S.pct/100)).toFixed(2):S.trig;
+  const d=(trig/v.ref-1)*100;
+  const wrong=(up&&trig<=v.ref)||(!up&&trig>=v.ref);
+  const h=$('#f-trighint');
+  let bad=false;
+  if(S.mode==='rel'&&v.st!=='fresh'){h.className='hint warn';h.textContent='Reference is carried (off-session). Relative triggers are blocked — use a fixed price.';bad=true}
+  else if(wrong){h.className='hint warn';h.textContent=`Trigger is already ${up?'below':'above'} the reference — this would fill almost immediately.`}
+  else{h.className='hint';h.innerHTML=S.mode==='rel'?`Compiles to fixed trigger <span class="mono" style="color:var(--tx)">$${f2(trig)}</span> using reference snapshot at arm time.`:`${d>=0?'+':''}${d.toFixed(2)}% from current reference.`}
+  $$('#f-mode button')[1].disabled=v.st!=='fresh';
+  $$('#f-mode button')[1].style.opacity=v.st!=='fresh'?.4:1;
+
+  $('#r-name').textContent=TN[S.t];
+  $('#r-ref').innerHTML=`$${f2(v.ref)}<small>${v.st==='fresh'?'Pyth · age '+v.age:'<span style="color:var(--wa)">CARRIED · '+v.age+'</span>'}</small>`;
+  $('#r-trig').innerHTML=`${up?'≥':'≤'} $${f2(trig)}<small style="color:${wrong?'var(--wa)':'var(--mu)'}">${d>=0?'+':''}${d.toFixed(2)}%</small>`;
+  $('#r-amtk').textContent=buy?'Maximum capital':'Maximum sold';
+  $('#r-amt').textContent=buy?`${f2(+S.amt||0)} USDC`:`${(+S.amt||0).toFixed(4)} ${v.sym}`;
+  $('#r-slip').innerHTML=`${(S.slip/100).toFixed(2)}%<small>${S.slip} bps</small>`;
+  const e=new Date(Date.UTC(2026,8,23,14,28)+S.exp*3600e3);
+  $('#r-exp').innerHTML=`${e.toISOString().slice(0,16).replace('T',' ')} UTC<small>in ${S.exp>=48?S.exp/24+' days':S.exp+' hours'}</small>`;
+
+  // ladder
+  const lo=Math.min(trig,v.ref)*0.985,hi=Math.max(trig,v.ref)*1.015,pos=x=>((x-lo)/(hi-lo)*100);
+  const tp=pos(trig),rp=pos(v.ref);
+  $('#r-lad').innerHTML=`<div class="zone" style="left:${up?tp:0}%;right:${up?0:100-tp}%"></div>
+    <div class="m" style="left:${rp}%;background:var(--info)"><span style="color:var(--info)">ref $${f2(v.ref)}</span></div>
+    <div class="m b" style="left:${tp}%;background:var(--ac)"><span style="color:var(--ac)">trigger $${f2(trig)}</span></div>`;
+
+  const amt=buy?`up to ${f2(+S.amt||0)} USDC of ${v.sym}`:`${(+S.amt||0).toFixed(4)} ${v.sym} for USDC`;
+  $('#r-expl').innerHTML=`Circuit will authorize an order to <b>${buy?'buy':'sell'} ${amt}</b> if the USD price ${up?'rises to or above':'falls to or below'} <b>$${f2(trig)}</b> before expiry. Execution is routed by Jupiter and may fill at a different price within your ${(S.slip/100).toFixed(2)}% slippage ceiling.`;
+  const amtOk=+S.amt>0&&(buy?+S.amt<=USDC:+S.amt<=v.bal);
+  $('#armbtn').disabled=bad||!amtOk;
+  $('#armbtn').textContent=!amtOk?'Insufficient balance':'Authorize & arm policy';
+}
+$('#f-asset').innerHTML=Object.entries(A).filter(([,v])=>v.route).map(([k,v])=>`<option value="${k}">${v.sym} — ${v.n}</option>`).join('');
+$('#f-asset').onchange=e=>{S.a=e.target.value;syncAsset()};
+$('#f-amt').oninput=e=>{S.amt=e.target.value;render()};
+$('#f-trig').oninput=e=>{S.trig=+e.target.value;render()};
+$('#f-pct').oninput=e=>{S.pct=+e.target.value;render()};
+seg('f-type','t',onType);seg('f-mode','mode');seg('f-slip','slip');seg('f-exp','exp');
+
+/* arming */
+function arm(){
+  const v=A[S.a],trig=S.mode==='rel'?+(v.ref*(1+S.pct/100)).toFixed(2):S.trig;
+  const id='crc_0'+nid;
+  $('#m-id').textContent=id;
+  const steps=[
+    ['Validate reference freshness',`Pyth ${S.a}/USD age ${v.age}`],
+    ['Compile policy to order params',`trigger ${trig} · slippageBps ${S.slip}`],
+    ['Request wallet signature','Phantom · 1 transaction'],
+    ['Deposit to Jupiter trigger vault','awaiting confirmation'],
+    ['Provider confirms order','order id received']
+  ];
+  $('#m-steps').innerHTML=steps.map(s=>`<div class="stp"><i></i><div>${s[0]}<small>${s[1]}</small></div></div>`).join('');
+  $('#m-foot').classList.add('hide');
+  const sm=$$('#m-sm div');sm.forEach(d=>d.className='');sm[0].className='cur';
+  $('#ov').classList.add('on');
+  const els=$$('#m-steps .stp');let i=0;
+  setTimeout(()=>{sm[0].className='done';sm[1].className='cur'},400);
+  const tick=()=>{
+    if(i>0){els[i-1].className='stp dn';els[i-1].querySelector('i').textContent='✓'}
+    if(i<els.length){els[i].className='stp run';i++;setTimeout(tick,650+Math.random()*350)}
+    else{
+      sm[1].className='done';sm[2].className='ok';
+      $('#m-foot').classList.remove('hide');
+      const buy=S.t.startsWith('buy');
+      P.unshift({id,a:S.a,t:S.t,amt:buy?`${+S.amt} USDC`:`${(+S.amt).toFixed(2)} ${v.sym}`,trig,st:'ARMED',exp:$('#r-exp').firstChild.textContent,nw:1});
+      nid++;renderP();
+    }
+  };
+  setTimeout(tick,500);
+}
+function closeM(){$('#ov').classList.remove('on')}
+
+/* policies */
+const SC={ARMED:'c-ac',EXECUTED:'c-ok',EXPIRED:'c-mu',CANCELLED:'c-mu',FAILED:'c-bad'};
+function renderP(){
+  const L=P.filter(p=>flt==='all'||(flt==='closed'?['EXPIRED','CANCELLED','FAILED'].includes(p.st):p.st===flt));
+  $('#plist').innerHTML=L.map(p=>{
+    const v=A[p.a],up=p.t.endsWith('above'),d=(p.trig/v.ref-1)*100;
+    const lab=p.t.replace('-',' ').replace(/^./,c=>c.toUpperCase());
+    let mid;
+    if(p.st==='ARMED'){const w=Math.max(4,100-Math.min(100,Math.abs(d)*12));mid=`<div class="dist">${Math.abs(d).toFixed(2)}% to trigger · ref $${f2(v.ref)}${v.st!=='fresh'?' <span style="color:var(--wa)">carried</span>':''}</div><div class="dbar"><div style="width:${w}%"></div></div>`}
+    else if(p.st==='EXECUTED')mid=`<div class="dist">avg $181.09 · tx 5YhN…c2Rk</div>`;
+    else if(p.st==='FAILED')mid=`<div class="dist" style="color:var(--bad)">${p.exp}</div>`;
+    else mid=`<div class="dist">condition not met before expiry</div>`;
+    const act=p.st==='ARMED'?`<button class="btn dng" onclick="cancelP('${p.id}')">Cancel</button>`:p.st==='EXECUTED'?`<button class="btn" onclick="go('receipt')">Receipt</button>`:p.st==='FAILED'?`<button class="btn">Details</button>`:'';
+    return `<div class="pol ${p.nw?'new':''}">
+      <div class="tk"><div class="tkic">${p.a.slice(0,2)}</div><div><b>${v.sym}</b><small class="mono">${p.id}</small></div></div>
+      <div class="rule">${lab} ${up?'≥':'≤'} $${f2(p.trig)}<small>${p.amt}</small></div>
+      <div>${mid}</div>
+      <div><span class="chip ${SC[p.st]}">${p.st}</span><div class="fr">${p.st==='ARMED'?'exp '+p.exp:p.st==='FAILED'?'':p.exp}</div></div>
+      <div style="text-align:right">${act}</div></div>`;
+  }).join('')||'<div style="padding:32px;text-align:center;color:var(--mu)">No policies</div>';
+  P.forEach(p=>p.nw=0);
+  const ar=P.filter(p=>p.st==='ARMED');
+  $('#st-armed').textContent=ar.length;
+  $('#st-cap').textContent='$'+f2(ar.reduce((s,p)=>s+(p.amt.includes('USDC')?parseFloat(p.amt):parseFloat(p.amt)*A[p.a].ref),0));
+}
+function cancelP(id){const p=P.find(x=>x.id===id);p.st='CANCELLED';p.exp='by user · just now';renderP()}
+$$('#flt button').forEach(b=>b.onclick=()=>{flt=b.dataset.f;$$('#flt button').forEach(x=>x.classList.toggle('on',x===b));renderP()});
+
+renderM();syncAsset();$('#f-pct').value=S.pct;renderP();go('connect');
+</script>
+</body>
+</html>

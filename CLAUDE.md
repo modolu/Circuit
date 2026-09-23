@@ -148,9 +148,22 @@ Vendor-specific names (Jupiter/Pyth field names) must not appear outside `src/in
 
 ## 6. Styling rules
 
+- **Visual source of truth:** `design/circuit_mockup.html` (amber Circuit system) for palette, type, spacing, radii, header, cards, buttons, and status chips. `design/circuit_mockup_alt.html` is a secondary reference for mobile behaviour only. Do not blend the two palettes. The mockups' example balances, prices, policies, fills, and signatures are placeholder content and must never ship.
+- Tokens live in `app/globals.css` `@theme` (`canvas, panel, panel-2, raised, line, line-strong, text, muted, dim, accent, success, warning, danger, info`). Amber `accent` is the only brand accent. Semantic colours are for state only.
+- Shared primitives live in `components/ui/` (`app-header`, `button`, `card`, `section-label`, `status-chip`, `value-block`, `circuit-mark`). Extend these before creating new ones.
+- `dim` is for borders, arrows, and disabled items, not for readable text. Small labels use `muted` to keep contrast.
 - Tailwind CSS 4, CSS-first. Define design tokens with `@theme` in `app/globals.css`. Do not create a JS Tailwind config unless a plugin forces it.
 - Brand direction (Brief §24): precision, control, infrastructure. Restrained palette, generous whitespace. No casino neon, meme art, giant candlesticks, or "AI magic" gradients. A screenshot should explain the product.
-- Use `tabular-nums` for every price, amount, and percentage. Use a monospace font for addresses, mints, feed IDs, and signatures (truncated in the middle, with a copy button showing the full value).
+- Use `font-mono` (tabular numerals) for every price, amount, percentage, timestamp, and identifier. Addresses, mints, feed IDs, and signatures are truncated in the middle, with a copy button showing the full value.
+- **Empty over fake:** render unbuilt data as honest empty states (`ValueBlock value={null}`, "Not integrated yet" chips, disabled nav items marked "soon"). Never populate UI with invented balances, prices, mints, orders, fills, addresses, or signatures.
+
+### UX decisions for later milestones
+
+- **Pyth reference is visually central.** The policy review shows the Pyth reference (price, freshness label, age, feed) and the compiled trigger (direction, price, distance from captured reference) as the largest figures, using `ValueBlock`.
+- **Natural-language review sentence.** The review UI prominently generates one plain-English sentence from the structured policy, e.g. "Buy up to 100 USDC of AAPLx if the USD price falls to or below $181 before expiry." The structured form from the primary mockup remains the input UX, and the sentence is output only.
+- **Explicit authorization.** Arming uses a clear "Authorize & arm policy" button, preceded by an explanation of what the wallet will sign. No hold-to-arm gestures.
+- **No synthetic charts.** Never render a generated or interpolated price series. Only plot real Pyth data, if a chart is ever added.
+- **No agent/API surface in the UI** (e.g. `get_policy()` JSON) until that interface is implemented.
 - Every numeric input shows its unit (USDC, token symbol, USD, %, bps).
 - Status is never conveyed by colour alone. Always pair colour with a text label and/or icon (e.g. `ARMED`, `STALE`).
 - Trigger direction is written in words ("when price falls to or below $181.00"), not only as symbols.

@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Circuit — Combined Design</title>
+<style>
+:root{
+  --bg:#0A0B0D;--p1:#111316;--p2:#16191D;--p3:#1C2025;
+  --ln:#23272E;--tx:#E7E5E0;--mu:#8B9099;--dim:#5C616A;
+  --ac:#8FB8FF;--acd:rgba(143,184,255,.12);
+  --ok:#6ED3A0;--okd:rgba(110,211,160,.14);
+  --wa:#E8C265;--wad:rgba(232,194,101,.14);
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--tx);font-family:var(--sans);-webkit-font-smoothing:antialiased;min-height:100vh}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input,select{font:inherit;color:inherit}
+.mono{font-family:var(--mono);font-feature-settings:"tnum"}
+.hide{display:none!important}
+a{color:var(--ac);text-decoration:none}
+
+/* ======== layout ======== */
+.container{display:grid;grid-template-columns:280px 1fr;min-height:100vh;gap:0}
+.sidebar{border-right:1px solid var(--ln);padding:24px 0;background:var(--p1);position:sticky;top:0;height:100vh;overflow-y:auto}
+.main{display:flex;flex-direction:column}
+.topbar{height:60px;display:flex;align-items:center;gap:16px;padding:0 32px;border-bottom:1px solid var(--ln)}.topbar b{font-weight:600}
+.content{flex:1;padding:32px 40px 64px;overflow-y:auto}
+.lbl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:500}
+.card{background:var(--p1);border:1px solid var(--ln);border-radius:12px}
+.btn{padding:11px 18px;border-radius:8px;font-weight:500;font-size:13px;border:1px solid var(--ln);transition:.15s;color:var(--mu)}
+.btn:hover{color:var(--tx);border-color:var(--mu)}
+.btn.pri{background:var(--ac);color:#0B1220;border:0}
+.btn.pri:hover{filter:brightness(1.1)}
+.btn.pri:disabled{opacity:.4;cursor:not-allowed}
+.btn.ok{background:var(--okd);color:var(--ok);border:0}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;font-size:11px;font-family:var(--mono);letter-spacing:.06em;font-weight:500}
+.c-ac{color:var(--ac);background:var(--acd)}.c-ok{color:var(--ok);background:var(--okd)}.c-wa{color:var(--wa);background:var(--wad)}.c-mu{color:var(--mu);background:var(--p3)}
+
+/* ======== sidebar ======== */
+.sid-h{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:600;padding:0 20px 10px;display:flex;justify-content:space-between;align-items:center}
+.sid-h.top{padding:0 20px 20px}
+.assets{display:flex;flex-direction:column;border-top:1px solid var(--ln)}
+.ast{display:flex;gap:12px;padding:14px 20px;cursor:pointer;transition:.12s;border-bottom:1px solid var(--ln);align-items:center}
+.ast:hover{background:var(--p2)}
+.ast.on{background:var(--p3);border-left:3px solid var(--ac);padding-left:17px}
+.ast.off{opacity:.4;cursor:not-allowed}
+.aic{width:40px;height:40px;border-radius:10px;background:var(--p2);display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:13px;color:var(--ac);flex:none}
+.ast.on .aic{background:var(--ac);color:#0B1220}
+.ast b{font-weight:600;font-size:13px}.ast small{display:block;font-size:11px;color:var(--mu);margin-top:2px;font-family:var(--mono)}
+.ast .tag{float:right;margin-top:0}.tag{font-size:9px;padding:2px 7px;border-radius:4px}
+.sid-f{padding:20px;border-top:1px solid var(--ln);font-size:11px;line-height:1.6;color:var(--dim)}
+.dot{width:5px;height:5px;border-radius:50%;display:inline-block;margin-right:6px}
+
+/* ======== home screen ======== */
+.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ac);font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.eyebrow::after{content:"";flex:1;height:1px;background:var(--ln)}
+.hero{background:linear-gradient(135deg,rgba(143,184,255,.08),rgba(110,211,160,.04));border:1px solid var(--ln);border-radius:12px;padding:24px;margin-bottom:24px}
+.hero .k{color:var(--mu);font-size:12px}
+.hero .v{font-size:32px;font-weight:600;margin-top:6px}
+.hero .r{display:flex;gap:10px;margin-top:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:24px}
+.stat{background:var(--p1);border:1px solid var(--ln);border-radius:12px;padding:16px}
+.stat .k{color:var(--mu);font-size:11px}
+.stat .v{font-size:20px;font-weight:600;margin-top:8px}
+.plist{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.pcard{background:var(--p1);border:1px solid var(--ln);border-radius:12px;padding:16px;cursor:pointer;transition:.15s}
+.pcard:hover{border-color:var(--ac);background:var(--p2)}
+.pcard.new{animation:pcnew 2.4s ease}
+@keyframes pcnew{from{border-color:var(--ac);background:var(--acd)}to{border-color:var(--ln);background:var(--p1)}}
+.ring{width:52px;height:52px;position:relative;margin-bottom:12px;flex:none}
+.ring svg{width:100%;height:100%}
+.ring span{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;font-weight:600;font-family:var(--mono)}
+.pcard b{font-size:14px;font-weight:600;display:block}.pcard small{color:var(--mu);font-size:12px;margin-top:4px;font-family:var(--mono);display:block}
+.pcard.exec{opacity:.6}
+.sec{font-size:12px;color:var(--mu);margin:20px 0 12px;display:flex;justify-content:space-between}
+
+/* ======== compose screen ======== */
+.sent{font-size:22px;line-height:1.6;margin:24px 0 20px}
+.f{display:inline-flex;align-items:baseline;border-bottom:2px solid var(--ac);color:var(--ac);padding:0 4px;position:relative;cursor:text}
+.f input,.f select{background:none;border:0;outline:0;color:var(--ac);font:inherit;font-family:var(--mono);font-size:22px;text-align:center;cursor:text}
+.f select{appearance:none;font-family:var(--sans);padding-right:6px}
+.f select option{font-size:14px;color:#0A0B0D}
+.f:hover{background:var(--acd)}
+.f.u span{font-weight:600}
+.warn{padding:12px 16px;background:var(--wad);border:1px solid rgba(232,194,101,.3);border-radius:10px;color:var(--wa);font-size:12px;margin:14px 0;display:none}
+.warn.on{display:block}
+.chart-wrap{margin:28px 0;border-top:1px solid var(--ln);border-bottom:1px solid var(--ln);padding:18px 0}
+.chart-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.chart-h b{font-size:14px;font-weight:600}.chart-h span{font-size:11px;color:var(--mu)}
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px;margin:24px 0}
+.fig{padding:12px 0}
+.fig .k{color:var(--mu);font-size:11px}
+.fig .v{font-size:22px;font-weight:600;margin-top:6px;font-family:var(--mono)}
+.fig .s{font-size:11px;color:var(--mu);margin-top:3px;font-family:var(--mono)}
+.fine{font-size:12px;color:var(--mu);line-height:1.6;margin:20px 0;max-width:520px}
+.fine b{color:var(--tx);font-weight:600}
+.hold{position:relative;margin:24px 0;height:52px;border-radius:10px;background:var(--p2);border:1px solid var(--ln);display:grid;place-items:center;font-weight:600;font-size:15px;user-select:none;touch-action:none;overflow:hidden}
+.hold .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--ac);border-radius:10px}
+.hold span{position:relative;z-index:1;transition:color .2s}
+.hold.full span{color:#0B1220}
+.hold.armed{background:var(--ok);border:0}
+.hold.armed span{color:#08170F}
+.hold.armed .fill{display:none}
+
+/* ======== receipt screen ======== */
+.rhead{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:20px;padding:24px;border-bottom:1px solid var(--ln)}
+.rhead .k{color:var(--mu);font-size:11px}
+.rhead .v{font-size:20px;font-weight:600;margin-top:6px}
+.rhead .s{font-size:11px;color:var(--mu);margin-top:3px}
+.tl{padding:20px 24px 0}.tm{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:600;margin-bottom:14px}
+.ev{display:grid;grid-template-columns:140px 20px 1fr;gap:16px;padding:14px 0;position:relative}
+.ev .t{font-family:var(--mono);font-size:11px;color:var(--mu);text-align:right}
+.ev .n{position:relative;display:flex;justify-content:center}
+.ev .n::before{content:"";position:absolute;top:0;bottom:-28px;width:1px;background:var(--ln);left:50%;transform:translateX(-50%)}
+.ev:last-child .n::before{display:none}
+.ev .n i{width:11px;height:11px;border-radius:50%;background:var(--bg);border:2px solid var(--ln);position:relative;z-index:1;margin-top:2px}
+.ev.k .n i{border-color:var(--ac)}
+.ev.g .n i{border-color:var(--ok);background:var(--ok)}
+.ev b{font-weight:600;font-size:13px;display:block}
+.ev p{color:var(--mu);font-size:12px;margin-top:4px;line-height:1.5}
+.ev code{font-family:var(--mono);font-size:10px;background:var(--p2);border:1px solid var(--ln);padding:2px 6px;border-radius:4px}
+
+/* ======== mobile ======== */
+@media(max-width:820px){
+  .container{grid-template-columns:1fr;grid-template-rows:auto auto 1fr}
+  .sidebar{position:fixed;bottom:0;left:0;right:0;height:auto;max-height:none;border-right:0;border-top:1px solid var(--ln);padding:12px 20px 20px;background:rgba(14,16,19,.95);backdrop-filter:blur(10px);z-index:40}
+  .sid-h{display:none}
+  .assets{border-top:0;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;flex-direction:row}
+  .ast{flex-direction:column;padding:10px;border:1px solid var(--ln);border-radius:10px;border-bottom:0;text-align:center}
+  .ast.on{border-left:0;padding:10px;border-color:var(--ac)}
+  .ast b{font-size:12px;margin-top:4px}.ast small{font-size:10px}
+  .aic{width:36px;height:36px;margin:0 auto}
+  .sid-f{display:none}
+  .topbar{padding:0 20px;border-bottom:0}
+  .content{padding:20px;max-width:100%}
+  .main{order:2}
+  .plist{grid-template-columns:1fr}
+  .figs{grid-template-columns:repeat(2,1fr)}
+  .rhead{grid-template-columns:repeat(2,1fr)}
+  .sent{font-size:18px}
+  .f input,.f select{font-size:18px}
+  .fig .v{font-size:18px}
+  .rhead .v{font-size:16px}
+  .ev{grid-template-columns:100px 20px 1fr;gap:12px}
+  .topbar{display:none}
+  body{padding-bottom:180px}
+}
+
+/* ======== screens ======== */
+.screen{display:none}
+.screen.on{display:block;animation:fi .25s ease}
+@keyframes fi{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sid-h top"><b>Circuit</b></div>
+    <div class="sid-h"><span>Stock tokens</span></div>
+    <div class="assets" id="assets"></div>
+    <div class="sid-f"><span class="dot" style="background:#6ED3A0"></span>fresh reference &nbsp; <span class="dot" style="background:#E8C265"></span>carried (off-session). Mints verified, tokens routable.</div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <header class="topbar"><b id="pagetit">Home</b></header>
+    <div class="content">
+
+      <!-- HOME -->
+      <div class="screen on" id="s-home">
+        <div class="hero">
+          <div class="k">Committed across armed policies</div>
+          <div class="v">$<span id="h-cap">150.00</span></div>
+          <div class="r"><span class="chip c-ac" id="h-armed">2 armed</span><span class="chip c-ok">1 filled overnight</span></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="k">Armed</div><div class="v" id="st-armed">2</div></div>
+          <div class="stat"><div class="k">Closest to trigger</div><div class="v" id="st-close">1.7%</div></div>
+          <div class="stat"><div class="k">Last fill</div><div class="v">$181.09</div></div>
+          <div class="stat"><div class="k">Executed · 30d</div><div class="v">1</div></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="eyebrow">Active policies</div>
+          <button class="btn pri" onclick="go('compose')" style="margin-bottom:0">+ New policy</button>
+        </div>
+        <div class="plist" id="plist"></div>
+      </div>
+
+      <!-- COMPOSE -->
+      <div class="screen" id="s-compose">
+        <div style="margin-bottom:20px"><button class="btn" onclick="go('home')" style="color:var(--mu);margin-bottom:12px">← Home</button><h1 style="font-size:20px;margin-top:0">New policy</h1></div>
+        <div class="sent" id="sent">
+          <span class="f"><select id="s-side"><option value="buy">Buy</option><option value="sell">Sell</option></select></span>
+          <span class="f"><input id="s-amt" type="text" style="width:80px" value="100"></span><span id="s-unit">USDC</span>
+          <span id="s-of">of</span> <span class="f"><select id="s-asset"></select></span>
+          when the price
+          <span class="f"><select id="s-dir"><option value="below">falls to</option><option value="above">rises to</option></select></span>
+          <span class="f u"><span>$</span><input id="s-trig" type="text" style="width:100px" value="181.00"></span>,
+          max <span class="f"><select id="s-slip"><option value="25">0.25%</option><option value="50" selected>0.50%</option><option value="100">1.00%</option></select></span> slippage,
+          expires <span class="f"><select id="s-exp"><option value="24">in 24h</option><option value="72">in 3d</option><option value="168">in 7d</option></select></span>.
+        </div>
+        <div class="warn" id="c-warn"></div>
+        <div class="chart-wrap">
+          <div class="chart-h"><b id="c-title">NVDA / USD</b><span id="c-age">age 0.6s · fresh</span></div>
+          <svg id="chart" width="100%" height="160" viewBox="0 0 900 160" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="figs">
+          <div class="fig"><div class="k">Current reference</div><div class="v" id="g-ref"></div><div class="s" id="g-refs"></div></div>
+          <div class="fig"><div class="k">Your trigger</div><div class="v" id="g-trig"></div><div class="s" id="g-trigs"></div></div>
+          <div class="fig"><div class="k" id="g-capk">Maximum capital</div><div class="v" id="g-cap"></div><div class="s" id="g-caps">hard ceiling</div></div>
+          <div class="fig"><div class="k">Worst price accepted</div><div class="v" id="g-worst"></div><div class="s">trigger ± slippage</div></div>
+        </div>
+        <div class="fine" id="c-expl"></div>
+        <div class="hold" id="hold"><div class="fill"></div><span>Hold to arm policy</span></div>
+        <div style="font-size:12px;color:var(--mu);text-align:center;margin-top:10px;line-height:1.6">Your wallet will sign one order. Cancel anytime before it fills. Circuit validates feed freshness; Jupiter enforces the trigger and slippage.</div>
+      </div>
+
+      <!-- RECEIPT -->
+      <div class="screen" id="s-receipt">
+        <div style="margin-bottom:12px"><button class="btn" onclick="go('home')" style="color:var(--mu)">← Back</button></div>
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:20px">
+          <h1 style="font-size:20px;margin:0">Buy NVDAx · $181.09</h1>
+          <span class="chip c-ok">EXECUTED</span>
+        </div>
+        <div class="card">
+          <div class="rhead">
+            <div><div class="k">Input</div><div class="v">100.00 USDC</div><div class="s">authorized maximum</div></div>
+            <div><div class="k">Output</div><div class="v">0.552212 NVDAx</div><div class="s">in your wallet</div></div>
+            <div><div class="k">Avg execution</div><div class="v">$181.09</div><div class="s">trigger ≤ $181.00</div></div>
+            <div><div class="k">Filled at</div><div class="v">02:18 UTC</div><div class="s">2026-09-22</div></div>
+          </div>
+          <div class="tl">
+            <div class="tm">Audit trail</div>
+            <div class="ev"><div class="t">09-21 14:30</div><div class="n"><i></i></div><div><b>Policy drafted</b><code>crc_0417</code><p>Buy 100 USDC if price ≤ $181 · slippage 50 bps · expires 24h</p></div></div>
+            <div class="ev k"><div class="t">09-21 14:30</div><div class="n"><i></i></div><div><b>Reference captured</b><code>PYTH</code><p>NVDA/USD $184.20 · age 0.6s · status fresh</p></div></div>
+            <div class="ev k"><div class="t">09-21 14:30</div><div class="n"><i></i></div><div><b>Policy compiled</b><p>Trigger $181.00 · amount 100000000 (6 dp) · slippageBps 50</p></div></div>
+            <div class="ev"><div class="t">09-21 14:30</div><div class="n"><i></i></div><div><b>Wallet authorized</b><code>3kVb…pQ7e</code><p>100 USDC deposited to Jupiter trigger vault</p></div></div>
+            <div class="ev k"><div class="t">09-21 14:30</div><div class="n"><i></i></div><div><b>Order confirmed</b><code>4fTq…Wm2B</code><p>Provider confirmed. Order armed and live.</p></div></div>
+            <div class="ev"><div class="t">09-22 02:18</div><div class="n"><i></i></div><div><b>Trigger condition met</b><code>JUPITER</code><p>USD price crossed ≤ $181.00 while offline · reference $180.96</p></div></div>
+            <div class="ev g"><div class="t">09-22 02:18</div><div class="n"><i></i></div><div><b>Filled onchain</b><code>5YhN…c2Rk</code><p>100.00 USDC → 0.552212 NVDAx · slot 331,204,118</p></div></div>
+            <div class="ev"><div class="t">09-22 02:18</div><div class="n"><i></i></div><div><b>Reconciled</b><p>Provider status and balance delta match. Receipt sealed.</p></div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const f2=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+// assets
+const A={NVDA:{n:'NVIDIA',r:184.20,st:'fresh',a:'0.6s',b:.184,ro:1},AAPL:{n:'Apple',r:227.35,st:'fresh',a:'1.1s',b:.5,ro:1},TSLA:{n:'Tesla',r:244.10,st:'carried',a:'14h',b:0,ro:1},SPY:{n:'ETF',r:571.80,st:'fresh',a:'0.9s',b:0,ro:0}};
+const S={a:'NVDA',side:'buy',dir:'below',amt:100,trig:181,slip:50,exp:24};
+const P=[
+ {id:'crc_0416',a:'AAPL',t:'sell ≥ $240',amt:'0.25 AAPLx',st:'ARMED',p:54},
+ {id:'crc_0415',a:'NVDA',t:'sell ≤ $170',amt:'0.10 NVDAx',st:'ARMED',p:91},
+ {id:'crc_0417',a:'NVDA',t:'buy ≤ $181',amt:'100 USDC',st:'EXECUTED',p:0},
+];
+let nid=418;
+
+// series for chart
+function series(ref,seed){let s=seed,v=ref*1.012,a=[];for(let i=0;i<96;i++){s=(s*9301+49297)%233280;v+=((s/233280)-.52)*ref*.0035;a.push(v)}const d=ref-a[95];return a.map((x,i)=>x+d*i/95)}
+const SER={};Object.keys(A).forEach((k,i)=>SER[k]=series(A[k].r,17+i*31));
+
+function renderAssets(){
+  $('#assets').innerHTML=Object.entries(A).map(([k,v])=>`<div class="ast ${k===S.a?'on':''} ${v.ro?'':'off'}" onclick="setAsset('${k}')">
+    <div class="aic">${k.slice(0,2)}</div><b>${k}</b><small class="mono">${v.r.toFixed(2)}</small><span class="tag ${v.st==='fresh'?'c-ok':'c-wa'}">${v.st}</span></div>`).join('');
+}
+function setAsset(k){if(!A[k].ro)return;S.a=k;const v=A[k];S.trig=+(v.r*(S.dir==='below'?.98:1.02)).toFixed(2);if(S.side==='sell')S.amt=+Math.min(.1,v.b||.1).toFixed(4);sync()}
+function sync(){
+  $('#s-asset').value=S.a;$('#s-trig').value=S.trig;$('#s-amt').value=S.amt;$('#s-slip').value=S.slip;
+  render();renderAssets();
+}
+function render(){
+  const v=A[S.a],buy=S.side==='buy',up=S.dir==='above',d=(S.trig/v.r-1)*100;
+  const wrong=(up&&S.trig<=v.r)||(!up&&S.trig>=v.r),amtOk=S.amt>0&&(buy?S.amt<=412.58:S.amt<=v.b);
+  let w='';if(v.st!=='fresh')w=`Ref for ${S.a} is carried (${v.a} old). You can arm, but check price before signing.`;
+  if(wrong)w=`Trigger is already ${up?'below':'above'} ref — fills almost immediately.`;if(!amtOk)w=buy?`Budget exceeds balance (412.58 USDC).`:`Amount exceeds balance (${v.b.toFixed(4)} ${S.a}).`;
+  $('#c-warn').classList.toggle('on',!!w);$('#c-warn').textContent=w;
+  $('#s-unit').textContent=buy?' USDC':` ${S.a}`;$('#s-of').textContent=buy?'of':'';
+  $('#c-title').textContent=`${S.a} / USD`;$('#c-age').textContent=v.st==='fresh'?`age ${v.a} · fresh`:`carried · ${v.a} old`;
+  $('#g-ref').textContent='$'+f2(v.r);$('#g-refs').textContent=v.st==='fresh'?`Pyth · ${v.a}`:`carried · ${v.a}`;
+  $('#g-trig').textContent=(up?'≥ ':'≤ ')+'$'+f2(S.trig);$('#g-trigs').textContent=`${d>=0?'+':''}${d.toFixed(2)}%`;
+  $('#g-capk').textContent=buy?'Maximum capital':'Max amount';$('#g-cap').textContent=buy?f2(S.amt):(+S.amt).toFixed(4);
+  $('#g-caps').textContent=buy?'USDC':S.a;
+  const worst=buy?S.trig*(1+S.slip/1e4):S.trig*(1-S.slip/1e4);
+  $('#g-worst').textContent='$'+f2(worst);
+  const amt=buy?`up to ${f2(+S.amt||0)} USDC of ${S.a}`:`${(+S.amt||0).toFixed(4)} ${S.a} for USDC`;
+  $('#c-expl').innerHTML=`<b>Circuit</b> will authorize an order to <b>${buy?'buy':'sell'} ${amt}</b> if the USD price ${up?'rises to or above':'falls to or below'} <b>$${f2(S.trig)}</b> before expiry. Execution is routed by Jupiter and may fill at a different price within your <b>${(S.slip/100).toFixed(2)}%</b> slippage ceiling. <b>Jupiter</b> holds and enforces the trigger and slippage.`;
+  $('#hold').disabled=!amtOk;
+  drawChart(v,up);
+}
+function drawChart(v,up){
+  const s=SER[S.a],W=900,H=160,pad=12;
+  const lo=Math.min(...s,S.trig)*.995,hi=Math.max(...s,S.trig)*1.005;
+  const y=p=>pad+(hi-p)/(hi-lo)*(H-pad*2),x=i=>i/(s.length-1)*(W-70);
+  const path=s.map((p,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(p).toFixed(1)}`).join('');
+  const ty=y(S.trig),ry=y(v.r);
+  const zone=up?`<rect x="0" y="0" width="${W-70}" height="${ty}" fill="rgba(143,184,255,.06)"/>`:`<rect x="0" y="${ty}" width="${W-70}" height="${H-ty}" fill="rgba(143,184,255,.06)"/>`;
+  let grid='';for(let i=1;i<3;i++)grid+=`<line x1="0" x2="${W-70}" y1="${i*H/3}" y2="${i*H/3}" stroke="#23272E" stroke-width="1"/>`;
+  $('#chart').innerHTML=`${grid}${zone}<path d="${path}" fill="none" stroke="#8FB8FF" stroke-width="1.5"/><circle cx="${x(s.length-1)}" cy="${ry}" r="3" fill="#8FB8FF"/><line x1="0" x2="${W-70}" y1="${ty}" y2="${ty}" stroke="#6ED3A0" stroke-width="1.5" stroke-dasharray="4 4"/><text x="6" y="${up?ty-8:ty+14}" font-size="10" fill="#8FB8FF">execution zone</text>`;
+}
+
+// hold to arm
+const H=$('#hold'),HF=H.querySelector('.fill'),HS=H.querySelector('span');let ht,hs;
+function resetHold(){H.className='hold';HF.style.transition='none';HF.style.width='0';HS.textContent='Hold to arm policy'}
+function down(e){e.preventDefault();if(H.classList.contains('armed')){resetHold();return}
+  HF.style.transition='width 1.2s linear';HF.style.width='100%';HS.textContent='Keep holding…';
+  hs=setTimeout(()=>H.classList.add('full'),600);
+  ht=setTimeout(()=>{H.classList.add('armed');HS.textContent='Signing…';
+    setTimeout(()=>{HS.textContent='✓ Armed · crc_0'+nid;const v=A[S.a],buy=S.side==='buy';
+      P.unshift({id:'crc_0'+nid++,a:S.a,t:`${buy?'buy':'sell'} ${up?'≥':'≤'} $${f2(S.trig)}`,amt:buy?f2(S.amt)+' USDC':(+S.amt).toFixed(4)+' '+S.a,st:'ARMED',p:Math.random()*20+1,nw:1});
+      renderHome();resetHold();go('home')},900)},1200)}
+function up(){if(H.classList.contains('armed'))return;clearTimeout(ht);clearTimeout(hs);H.classList.remove('full');HF.style.transition='width .25s';HF.style.width='0';HS.textContent='Hold to arm policy'}
+H.addEventListener('pointerdown',down);H.addEventListener('pointerup',up);H.addEventListener('pointerleave',up);
+
+function renderHome(){
+  const armed=P.filter(p=>p.st==='ARMED');
+  $('#h-cap').textContent=f2(armed.reduce((s,p)=>s+(p.amt.includes('USDC')?parseFloat(p.amt):parseFloat(p.amt)*A[p.a].r),0));
+  $('#h-armed').textContent=armed.length+' armed';
+  $('#st-armed').textContent=armed.length;
+  $('#st-close').textContent=Math.min(...armed.map(p=>p.p)).toFixed(1)+'%';
+  $('#plist').innerHTML=P.filter(p=>p.st==='ARMED').map(p=>{
+    const c=2*Math.PI*24;
+    return `<div class="pcard ${p.nw?'new':''}"><div class="ring"><svg width="52" height="52"><circle cx="26" cy="26" r="24" fill="none" stroke="#2A2F37" stroke-width="4"/><circle cx="26" cy="26" r="24" fill="none" stroke="#8FB8FF" stroke-width="4" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c*(1-p.p/100)}"/></svg><span>${p.p.toFixed(1)}%</span></div><b>${p.a}</b><small>${p.t}</small><small style="color:var(--ac);margin-top:6px">${p.amt}</small></div>`;
+  }).join('')+(P.filter(p=>p.st==='ARMED').length===0?'<div style="grid-column:1/-1;padding:40px 20px;text-align:center;color:var(--mu)">No armed policies. <button class="btn pri" onclick="go(\'compose\')">Create one</button></div>':'');
+  P.forEach(p=>p.nw=0);
+}
+
+// screens
+function go(s){
+  $$('.screen').forEach(e=>e.classList.toggle('on',e.id==='s-'+s));
+  $('#pagetit').textContent=s==='home'?'Home':s==='compose'?'New policy':'Receipt';
+  if(s==='compose'){renderAssets();sync()}
+  if(s==='home')renderHome();
+  window.scrollTo(0,0);
+}
+$('#s-side').onchange=e=>{S.side=e.target.value;const v=A[S.a];S.amt=S.side==='buy'?100:+Math.min(.1,v.b||.1).toFixed(4);sync()};
+$('#s-asset').onchange=e=>{S.a=e.target.value;setAsset(S.a)};
+$('#s-dir').onchange=e=>{S.dir=e.target.value;const v=A[S.a];S.trig=+(v.r*(S.dir==='below'?.98:1.02)).toFixed(2);sync()};
+$('#s-amt').oninput=e=>{S.amt=+e.target.value||0;render()};
+$('#s-trig').oninput=e=>{S.trig=+e.target.value||0;render()};
+$('#s-slip').onchange=e=>{S.slip=+e.target.value;render()};
+
+renderAssets();renderHome();
+</script>
+</body>
+</html>
