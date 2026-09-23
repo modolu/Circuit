@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId, useState } from "react";
+import { WalletAuthControl } from "@/components/wallet/wallet-auth-control";
 import { CircuitMark } from "./circuit-mark";
 import { cn } from "./cn";
 
@@ -73,26 +74,7 @@ function ClusterPill({ cluster }: { cluster: string }) {
   );
 }
 
-function WalletControl() {
-  const noteId = useId();
-  return (
-    <>
-      <button
-        type="button"
-        disabled
-        aria-describedby={noteId}
-        className="flex cursor-not-allowed items-center gap-2 rounded-full border border-line px-3 py-1.5 font-mono text-xs text-muted"
-      >
-        Connect wallet
-      </button>
-      <span id={noteId} className="sr-only">
-        Wallet connection is not available in this build yet.
-      </span>
-    </>
-  );
-}
-
-export function AppHeader({ cluster }: { cluster: string }) {
+export function AppHeader({ cluster, sessionWallet }: { cluster: string; sessionWallet: string | null }) {
   const pathname = usePathname();
   // The menu belongs to the path it was opened on, so navigating closes it.
   const [menuOpenOn, setMenuOpenOn] = useState<string | null>(null);
@@ -127,7 +109,7 @@ export function AppHeader({ cluster }: { cluster: string }) {
 
         {!minimal && (
           <div className="flex items-center gap-2">
-            <WalletControl />
+            <WalletAuthControl sessionWallet={sessionWallet} />
             <button
               type="button"
               className="rounded-md border border-line px-3 py-1.5 text-[13px] text-muted hover:text-text md:hidden"

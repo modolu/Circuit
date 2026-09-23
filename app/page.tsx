@@ -1,8 +1,10 @@
-import { Button, ButtonLink } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/components/ui/cn";
 import { SectionLabel } from "@/components/ui/section-label";
 import { StatusChip } from "@/components/ui/status-chip";
+import { WalletSignInPanel } from "@/components/wallet/wallet-sign-in-panel";
+import { getSession } from "@/src/auth/session";
 
 const STEPS = [
   { key: "01 DEFINE", body: "Asset, amount, trigger, slippage, expiry" },
@@ -20,7 +22,8 @@ const FLOW = [
   { layer: "Audit trail", detail: "every transition logged", highlight: true },
 ] as const;
 
-export default function ConnectPage() {
+export default async function ConnectPage() {
+  const session = await getSession();
   return (
     <main className="mx-auto grid w-full max-w-[1180px] items-center gap-12 px-4 py-14 sm:px-6 lg:min-h-[calc(100dvh-56px-60px)] lg:grid-cols-[1.1fr_1fr] lg:gap-14 lg:py-16">
       <div>
@@ -38,18 +41,15 @@ export default function ConnectPage() {
           exactly what happened.
         </p>
 
-        <div className="flex flex-col gap-2.5 sm:flex-row">
-          <Button variant="primary" size="lg" disabled aria-describedby="wallet-milestone">
-            Connect Solana wallet
-          </Button>
-          <ButtonLink href="/dashboard" size="lg">
-            View dashboard
-          </ButtonLink>
-        </div>
-        <p id="wallet-milestone" className="mt-3 text-xs text-muted">
-          Wallet connection arrives in the wallet milestone. Until then this is a preview of the
-          product shell.
-        </p>
+        <WalletSignInPanel
+          sessionWallet={session?.walletAddress ?? null}
+          showDashboardLink
+          extraAction={
+            <ButtonLink href="/dashboard" size="lg">
+              View dashboard
+            </ButtonLink>
+          }
+        />
 
         <ol className="mt-10 grid grid-cols-2 gap-x-3 gap-y-5 border-t border-line pt-5 sm:grid-cols-4">
           {STEPS.map((step) => (

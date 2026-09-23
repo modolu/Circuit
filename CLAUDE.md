@@ -43,8 +43,8 @@ Precedence when they conflict: **ARCHITECTURE > PRODUCT BRIEF > CLAUDE.md**, exc
 | ORM / migrations | `drizzle-orm` 0.45.3 + `drizzle-kit` 0.31.11, `@neondatabase/serverless` 1.1.0 (`neon-serverless` Pool driver). Tests: `@electric-sql/pglite` 0.5.8 (in-process Postgres, dev-only). |
 | Validation | Zod 4 at every external boundary |
 | Money | `bigint` for atomic token amounts, `decimal.js` for USD values. Never `number` for money. |
-| Wallet | `@solana/wallet-adapter-base`, `@solana/wallet-adapter-react`, `@solana/wallet-adapter-react-ui` with Wallet Standard discovery via `wallets={[]}`. **Do not add `@solana/wallet-adapter-wallets`.** (Installed when wallet work begins.) |
-| Solana client | `@solana/web3.js`, for addresses, signatures, and transactions only |
+| Wallet | `@solana/wallet-adapter-base` 0.9.28, `@solana/wallet-adapter-react` 0.15.40, `@solana/wallet-adapter-react-ui` 0.9.40, with Wallet Standard discovery (no explicit adapters: `WALLET_STANDARD_ONLY = []` in `components/wallet/solana-provider.tsx`). **Do not add `@solana/wallet-adapter-wallets`.** |
+| Solana client | `@solana/web3.js` 1.99.0, for addresses, signatures, and transactions only. Ed25519 login verification: `tweetnacl` 1.0.3 (server-side). |
 | Reference data | Pyth Pro REST, server-side only, on demand (no Circuit-owned WebSocket) |
 | Execution | Jupiter Trigger V2 REST, server-side only |
 | Tests | Vitest + Testing Library (unit/service/component), Playwright (e2e critical path) |
@@ -207,7 +207,15 @@ Vendor-specific names (Jupiter/Pyth field names) must not appear outside `src/in
 
 - **No private keys, ever.** Circuit never asks for, receives, or stores seed phrases, private keys, or exported secret keys.
 - **Secrets are server-only.** Pyth and Jupiter API keys, the Jupiter JWT, the session secret, the encryption key, and `DATABASE_URL` are never exposed via `NEXT_PUBLIC_*`, never imported into client components, and never logged.
-- **Wallet login:** single-use nonce. The signed message includes domain, wallet, nonce, issued-at, expiry, chain, and purpose. The session is an HttpOnly, Secure, SameSite=Lax cookie.
+- **Wallet login** (`src/auth/`, routes `app/api/auth/{nonce,verify,logout}`):
+  - `POST /api/auth/nonce` issues a 5-minute challenge. The server stores only `sha256(nonce)` in `auth_nonces` along with the wallet, origin, cluster and times, and returns the canonical Sign-In With Solana message (`src/auth/wallet-message.ts`).
+  - `POST /api/auth/verify` takes `{ walletAddress, nonce, signature(base64) }`, rebuilds the exact message from the stored challenge, and verifies the Ed25519 signature. Only then does it consume the nonce, with one conditional update in the same transaction as the wallet upsert. Client-supplied message text is never trusted.
+  - Every failure returns the same generic `UNAUTHENTICATED` message. The specific reason is logged, never returned.
+  - Sign-in runs only from an explicit click, never on wallet connect. Wallets without `signMessage` get a clear error; there is no fallback to transaction signing.
+- **Session:** stateless `circuit_session` cookie, `v1.<payload>.<HMAC-SHA-256>` signed with `CIRCUIT_SESSION_SECRET` (at least 32 characters) and checked with a constant-time comparison. The payload holds only the wallet, issued-at and expiry. Lifetime is 8 hours. The cookie is HttpOnly, SameSite=Lax, Path=/, and Secure except when `NEXT_PUBLIC_APP_URL` is plain-HTTP localhost. There is no sessions table: logout clears the cookie, and a copied token stays valid until it expires.
+- **Auth vs wallet:** "Log out" ends the Circuit session and "Disconnect" ends the wallet-adapter connection. They are separate actions.
+- **Server helpers:** `getSession`/`requireSession` (`src/auth/session.ts`) and `getAuthenticatedWallet`/`requireAuthenticatedWallet` (`src/auth/current-wallet.ts`). Later routes must scope every resource to that wallet's id and return NOT_FOUND for foreign resources.
+- **Public config reaches client components as props from a Server Component** (e.g. `cluster` into `SolanaProvider`). Client code never imports `src/config/env.ts`.
 - **Ownership check on every policy read and mutation:** `policy.wallet_id === session.walletId`. Knowing a UUID is not authorization.
 - A Circuit session never grants authority to move funds. Jupiter authorization is separate and explicit.
 - **Curated assets only.** Users cannot submit arbitrary mints. Never infer a mint from a ticker. **Do not invent token mints, Pyth feed IDs, Jupiter fields, or transaction signatures.** Every catalog value is sourced from an issuer, Pyth, or Jupiter page, and the source is recorded in `assets.metadata`. Seed assets ship disabled for execution until verified (Architecture §27).
@@ -366,7 +374,8 @@ These should be recorded in `CIRCUIT_ARCHITECTURE.md` when the user authorizes e
 
 ## 20. Resolved decisions
 
-- **Wallet:** `@solana/web3.js` + `@solana/wallet-adapter-{base,react,react-ui}`, with Wallet Standard discovery via `wallets={[]}`. No `@solana/wallet-adapter-wallets`.
+- **Wallet:** `@solana/web3.js` + `@solana/wallet-adapter-{base,react,react-ui}`, with Wallet Standard discovery via `wallets={[]}`. No `@solana/wallet-adapter-wallets`. Installed in Task 3; versions are in §2.
+- **Auth nonces:** persisted in `auth_nonces` (hash only), not a stateless cookie, so single use holds on serverless (Arch §5.7). `wallet_auth_sessions` stays reserved for provider auth.
 - **Pyth in E2E:** a local fixture HTTP server set as `PYTH_BASE_URL`. No fake-Pyth app mode.
 - **Neon:** `@neondatabase/serverless` + Drizzle `neon-serverless` for transactional flows. No `neon-http` there. `ws` only if Node 22's WebSocket proves insufficient.
 - **Tooling:** pnpm 11.5.1 as installed.

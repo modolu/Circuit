@@ -10,7 +10,7 @@ import { closeDb, getDb } from "./client.ts";
  * Run with `pnpm db:migrate`.
  */
 
-const EXPECTED_TABLES = ["assets", "executions", "policies", "policy_events", "wallets"];
+const EXPECTED_TABLES = ["assets", "auth_nonces", "executions", "policies", "policy_events", "wallets"];
 
 async function run(): Promise<void> {
   const db = getDb();

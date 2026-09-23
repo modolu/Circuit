@@ -184,6 +184,26 @@ export const executions = pgTable(
   ],
 );
 
+/** Single-use Circuit login challenges (CIRCUIT_ARCHITECTURE.md §5.7). Stores a hash, never the raw nonce. */
+export const authNonces = pgTable(
+  "auth_nonces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    nonceHash: text("nonce_hash").notNull().unique(),
+    walletAddress: text("wallet_address").notNull(),
+    appOrigin: text("app_origin").notNull(),
+    cluster: text("cluster").notNull(),
+    issuedAt: timestamptz("issued_at").notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+    consumedAt: timestamptz("consumed_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("auth_nonces_expires_idx").on(t.expiresAt),
+    check("auth_nonces_expires_after_issued", sql`${t.expiresAt} > ${t.issuedAt}`),
+  ],
+);
+
 export type Wallet = typeof wallets.$inferSelect;
 export type Asset = typeof assets.$inferSelect;
 export type NewAsset = typeof assets.$inferInsert;
@@ -193,3 +213,5 @@ export type PolicyEvent = typeof policyEvents.$inferSelect;
 export type NewPolicyEvent = typeof policyEvents.$inferInsert;
 export type Execution = typeof executions.$inferSelect;
 export type NewExecution = typeof executions.$inferInsert;
+export type AuthNonce = typeof authNonces.$inferSelect;
+export type NewAuthNonce = typeof authNonces.$inferInsert;

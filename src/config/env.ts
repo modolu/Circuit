@@ -24,11 +24,13 @@ export const JUPITER_MODES = ["mock", "live"] as const;
 export type JupiterMode = (typeof JUPITER_MODES)[number];
 
 export const SOLANA_CLUSTERS = ["mainnet-beta", "devnet", "testnet"] as const;
+export type SolanaCluster = (typeof SOLANA_CLUSTERS)[number];
 
 const serverEnvSchema = z
   .object({
     DATABASE_URL: optional(postgresUrl),
-    CIRCUIT_SESSION_SECRET: optional(secret),
+    // HMAC key for Circuit session cookies: at least 32 characters of random data.
+    CIRCUIT_SESSION_SECRET: optional(z.string().min(32, "must be at least 32 characters")),
     CIRCUIT_TOKEN_ENCRYPTION_KEY: optional(secret),
     JUPITER_API_KEY: optional(secret),
     PYTH_API_KEY: optional(secret),
@@ -92,6 +94,15 @@ export function getDatabaseUrl(): string {
     throw new Error("DATABASE_URL is not set. Add it to .env.local (never commit it).");
   }
   return url;
+}
+
+/** For session signing only. Throws a value-free error when the secret is absent. */
+export function getSessionSecret(): string {
+  const secret = getServerEnv().CIRCUIT_SESSION_SECRET;
+  if (!secret) {
+    throw new Error("CIRCUIT_SESSION_SECRET is not set. Add it to .env.local (never commit it).");
+  }
+  return secret;
 }
 
 export function getPublicEnv(): PublicEnv {

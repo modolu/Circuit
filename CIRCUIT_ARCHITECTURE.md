@@ -335,6 +335,37 @@ Rules:
 - prefer ephemeral use if possible;
 - expire aggressively.
 
+This table is reserved for provider (Jupiter) auth. Circuit login does not use it.
+
+### 5.7 `auth_nonces`
+
+Single-use Circuit login challenges (§8). A nonce stored only in a cookie cannot guarantee single use under concurrent or replayed verification on serverless infrastructure, so challenges are persisted.
+
+```text
+id                  uuid PK
+nonce_hash          text UNIQUE NOT NULL      -- SHA-256 hex of the raw nonce; the raw nonce is never stored
+wallet_address      text NOT NULL             -- the only wallet this challenge can authenticate
+app_origin          text NOT NULL             -- origin embedded in the signed message (domain + URI)
+cluster             text NOT NULL             -- Solana cluster embedded in the signed message
+issued_at           timestamptz NOT NULL
+expires_at          timestamptz NOT NULL      -- about 5 minutes after issued_at
+consumed_at         timestamptz NULL
+created_at          timestamptz NOT NULL
+```
+
+Index:
+
+```text
+(expires_at)
+```
+
+Rules:
+
+- the server builds the canonical login message from these fields plus the raw nonce, and verifies the signature against exactly that message; it never accepts client-supplied message text;
+- consume only after the Ed25519 signature verifies, with one conditional update (`consumed_at IS NULL AND expires_at > now AND wallet_address = signer`), so a nonce authenticates at most once;
+- signatures are not stored;
+- expired rows may be deleted; they carry no audit value.
+
 ---
 
 ## 6. Directory structure
@@ -361,6 +392,7 @@ No new top-level directory without editing this file.
 │   │   ├── new/page.tsx
 │   │   └── [policyId]/page.tsx
 │   └── api/
+│       ├── _lib/http.ts              (shared JSON envelope + error mapping; not a route)
 │       ├── assets/route.ts
 │       ├── reference/[assetId]/route.ts
 │       ├── policies/route.ts
@@ -368,6 +400,9 @@ No new top-level directory without editing this file.
 │       ├── policies/[policyId]/arm/route.ts
 │       ├── policies/[policyId]/cancel/route.ts
 │       ├── policies/[policyId]/reconcile/route.ts
+│       ├── auth/nonce/route.ts
+│       ├── auth/verify/route.ts
+│       ├── auth/logout/route.ts
 │       ├── jupiter/auth/... 
 │       └── cron/reconcile/route.ts
 │
@@ -414,13 +449,16 @@ No new top-level directory without editing this file.
 │   │   │   ├── assets.ts
 │   │   │   ├── wallets.ts
 │   │   │   ├── policies.ts
-│   │   │   └── executions.ts
+│   │   │   ├── executions.ts
+│   │   │   └── auth-nonces.ts
 │   │   └── migrations/
 │   │
 │   ├── auth/
 │   │   ├── wallet-message.ts
 │   │   ├── verify-wallet.ts
-│   │   └── session.ts
+│   │   ├── session.ts
+│   │   ├── login.ts
+│   │   └── current-wallet.ts
 │   │
 │   ├── validation/
 │   │   ├── policy.ts
@@ -512,11 +550,14 @@ Circuit identity is the wallet address.
 Flow:
 
 ```text
-request nonce
+request nonce (persisted as a hash in `auth_nonces`, ~5 minute expiry)
 → wallet signs Circuit login message
-→ server verifies signature
+→ server rebuilds the canonical message and verifies the Ed25519 signature
+→ server atomically consumes the nonce and upserts the wallet
 → server issues HttpOnly Secure SameSite=Lax session cookie
 ```
+
+The Circuit session is a stateless HMAC-SHA-256 signed cookie (`circuit_session`) holding only the wallet address, issued-at, and expiry. There is no sessions table, so logout clears the cookie and a token stays valid until it expires.
 
 Do not use `localStorage` bearer tokens for Circuit auth.
 

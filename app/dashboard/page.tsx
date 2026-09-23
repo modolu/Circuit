@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { POLICY_STATUS_TONE, StatusChip, type PolicyStatus } from "@/components/ui/status-chip";
 import { ValueBlock } from "@/components/ui/value-block";
+import { shortAddress } from "@/components/wallet/short-address";
+import { WalletSignInPanel } from "@/components/wallet/wallet-sign-in-panel";
+import { getSession } from "@/src/auth/session";
 
 export const metadata: Metadata = {
   title: "Policies",
@@ -62,7 +64,9 @@ function Arrow() {
   );
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const session = await getSession();
+  const wallet = session?.walletAddress ?? null;
   return (
     <main className="mx-auto w-full max-w-[1180px] px-4 pt-8 pb-24 sm:px-6">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -72,29 +76,42 @@ export default function DashboardPage() {
             Your execution policies and their provider-confirmed state will appear here.
           </p>
         </div>
-        <StatusChip tone="muted" className="self-start sm:self-auto">
-          NO WALLET CONNECTED
-        </StatusChip>
+        {wallet ? (
+          <StatusChip tone="success" className="self-start sm:self-auto">
+            SIGNED IN · {shortAddress(wallet)}
+          </StatusChip>
+        ) : (
+          <StatusChip tone="muted" className="self-start sm:self-auto">
+            NOT SIGNED IN
+          </StatusChip>
+        )}
       </div>
 
-      <Card as="section" aria-labelledby="empty-heading" className="px-5 py-10 sm:px-8 sm:py-12">
-        <SectionLabel>Get started</SectionLabel>
-        <h2 id="empty-heading" className="mt-3 max-w-[520px] text-lg font-semibold sm:text-xl">
-          Connect a Solana wallet to create your first execution policy.
-        </h2>
-        <p className="mt-2 max-w-[520px] text-[13px] leading-relaxed text-muted">
-          Your wallet is your Circuit identity. Circuit never asks for your seed phrase or private
-          keys, and nothing executes until you authorize it in your wallet.
-        </p>
-        <div className="mt-6 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-          <Button variant="primary" size="lg" disabled aria-describedby="dash-wallet-note">
-            Connect Solana wallet
-          </Button>
-          <p id="dash-wallet-note" className="text-xs text-muted">
-            Wallet connection arrives in the wallet milestone.
+      {wallet ? (
+        <Card as="section" aria-labelledby="empty-heading" className="px-5 py-10 sm:px-8 sm:py-12">
+          <SectionLabel>Your policies</SectionLabel>
+          <h2 id="empty-heading" className="mt-3 max-w-[520px] text-lg font-semibold sm:text-xl">
+            No policies yet.
+          </h2>
+          <p className="mt-2 max-w-[520px] text-[13px] leading-relaxed text-muted">
+            Policy creation arrives in a later milestone. Policies you create with this wallet will be
+            listed here with their provider-confirmed state.
           </p>
-        </div>
-      </Card>
+          <WalletSignInPanel sessionWallet={wallet} size="md" className="mt-6" />
+        </Card>
+      ) : (
+        <Card as="section" aria-labelledby="empty-heading" className="px-5 py-10 sm:px-8 sm:py-12">
+          <SectionLabel>Get started</SectionLabel>
+          <h2 id="empty-heading" className="mt-3 max-w-[520px] text-lg font-semibold sm:text-xl">
+            Connect a Solana wallet to create your first execution policy.
+          </h2>
+          <p className="mt-2 max-w-[520px] text-[13px] leading-relaxed text-muted">
+            Your wallet is your Circuit identity. Circuit never asks for your seed phrase or private
+            keys, and nothing executes until you authorize it in your wallet.
+          </p>
+          <WalletSignInPanel sessionWallet={null} className="mt-6" />
+        </Card>
+      )}
 
       <section aria-labelledby="stack-heading" className="mt-12">
         <SectionLabel id="stack-heading" className="mb-3">

@@ -26,7 +26,11 @@ const SENSITIVE_KEY_FRAGMENTS = [
   "databaseurl",
 ];
 
+// Exact keys that are secret in Circuit's auth flow. `transactionSignature` stays loggable (onchain evidence).
+const SENSITIVE_EXACT_KEYS = new Set(["signature", "nonce", "session", "set-cookie"]);
+
 function isSensitiveKey(key: string): boolean {
+  if (SENSITIVE_EXACT_KEYS.has(key.toLowerCase())) return true;
   const normalized = key.toLowerCase().replace(/[-_]/g, "");
   // `accessToken`, `idToken`, `token` are secrets; `tokenMint`, `tokenSymbol` are not.
   if (normalized.endsWith("token")) return true;
@@ -35,6 +39,7 @@ function isSensitiveKey(key: string): boolean {
 
 const BEARER_VALUE = /^bearer\s+\S+/i;
 const JWT_VALUE = /^eyJ[\w-]+\.[\w-]+\.[\w-]*$/;
+const CIRCUIT_SESSION_VALUE = /^v1\.[\w-]{20,}\.[\w-]{20,}$/;
 const CONNECTION_STRING_WITH_PASSWORD = /^[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i;
 
 function isSensitiveValue(value: string): boolean {
@@ -42,6 +47,7 @@ function isSensitiveValue(value: string): boolean {
   return (
     BEARER_VALUE.test(trimmed) ||
     JWT_VALUE.test(trimmed) ||
+    CIRCUIT_SESSION_VALUE.test(trimmed) ||
     CONNECTION_STRING_WITH_PASSWORD.test(trimmed)
   );
 }
