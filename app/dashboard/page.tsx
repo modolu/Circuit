@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { AssetReferenceCard, type ReferenceState } from "@/components/asset/asset-reference-card";
+import { formatUsd } from "@/components/asset/format";
 import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { POLICY_STATUS_TONE, StatusChip, type PolicyStatus } from "@/components/ui/status-chip";
@@ -6,6 +8,13 @@ import { ValueBlock } from "@/components/ui/value-block";
 import { shortAddress } from "@/components/wallet/short-address";
 import { WalletSignInPanel } from "@/components/wallet/wallet-sign-in-panel";
 import { getSession } from "@/src/auth/session";
+import { getDb } from "@/src/db/client";
+import type { PublicAsset } from "@/src/domain/asset";
+import { toAppError } from "@/src/domain/errors";
+import { getPythClient } from "@/src/integrations/pyth/client";
+import { logger } from "@/src/observability/logger";
+import { getAssetReference } from "@/src/services/get-reference";
+import { listPublicAssets } from "@/src/services/list-assets";
 
 export const metadata: Metadata = {
   title: "Policies",
@@ -18,18 +27,21 @@ const INFRASTRUCTURE = [
     role: "Reference data",
     body: "Independent market context and freshness for each supported stock token.",
     milestone: "Milestone 2",
+    integrated: true,
   },
   {
     provider: "Jupiter Trigger",
     role: "Execution rail",
     body: "Autonomous price-trigger execution that keeps running without Circuit or your browser.",
     milestone: "Milestone 4",
+    integrated: false,
   },
   {
     provider: "Solana",
     role: "Settlement evidence",
     body: "Final transaction evidence for every fill, linked from the policy's audit trail.",
     milestone: "Milestone 6",
+    integrated: false,
   },
 ] as const;
 
@@ -64,9 +76,48 @@ function Arrow() {
   );
 }
 
+type CatalogState =
+  | { status: "loaded"; entries: Array<{ asset: PublicAsset; state: ReferenceState }> }
+  | { status: "unavailable" };
+
+/** Loads curated assets and one live Pyth reference each. Failures become honest states, never old values. */
+async function loadCatalog(): Promise<CatalogState> {
+  const db = getDb();
+  let assets: PublicAsset[];
+  try {
+    assets = await listPublicAssets(db);
+  } catch (error) {
+    logger.error("dashboard.catalog_failed", { error: error instanceof Error ? error : undefined });
+    return { status: "unavailable" };
+  }
+  const pyth = getPythClient();
+  const entries = await Promise.all(
+    assets.map(async (asset) => {
+      try {
+        const { reference } = await getAssetReference(db, asset.id, { pyth });
+        return { asset, state: { status: "available", reference } as ReferenceState };
+      } catch (error) {
+        const appError = toAppError(error);
+        logger.warn("dashboard.reference_unavailable", {
+          assetId: asset.id,
+          code: appError.code,
+          reason: typeof appError.cause === "string" ? appError.cause : undefined,
+        });
+        return { asset, state: { status: "unavailable", message: appError.message } as ReferenceState };
+      }
+    }),
+  );
+  return { status: "loaded", entries };
+}
+
 export default async function DashboardPage() {
   const session = await getSession();
   const wallet = session?.walletAddress ?? null;
+  const catalog = wallet ? await loadCatalog() : null;
+  const firstReference =
+    catalog?.status === "loaded"
+      ? catalog.entries.find((entry) => entry.state.status === "available")
+      : undefined;
   return (
     <main className="mx-auto w-full max-w-[1180px] px-4 pt-8 pb-24 sm:px-6">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -99,7 +150,36 @@ export default async function DashboardPage() {
           </p>
           <WalletSignInPanel sessionWallet={wallet} size="md" className="mt-6" />
         </Card>
-      ) : (
+      ) : null}
+
+      {catalog && (
+        <section aria-labelledby="reference-heading" className="mt-12">
+          <SectionLabel id="reference-heading" className="mb-3">
+            Verified assets · live reference
+          </SectionLabel>
+          {catalog.status === "unavailable" ? (
+            <Card className="px-5 py-8 text-[13px] text-muted sm:px-6">
+              The asset catalog could not be loaded. Refresh the page to try again.
+            </Card>
+          ) : catalog.entries.length === 0 ? (
+            <Card className="px-5 py-8 sm:px-6">
+              <p className="text-[15px] font-semibold">No verified assets are enabled yet.</p>
+              <p className="mt-2 max-w-[560px] text-[13px] leading-relaxed text-muted">
+                An asset appears here once its issuer, Solana mint and Pyth equity feed have been verified and
+                Circuit&apos;s Pyth access can read that feed.
+              </p>
+            </Card>
+          ) : (
+            <div className="grid gap-3">
+              {catalog.entries.map(({ asset, state }) => (
+                <AssetReferenceCard key={asset.id} asset={asset} state={state} />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {!wallet ? (
         <Card as="section" aria-labelledby="empty-heading" className="px-5 py-10 sm:px-8 sm:py-12">
           <SectionLabel>Get started</SectionLabel>
           <h2 id="empty-heading" className="mt-3 max-w-[520px] text-lg font-semibold sm:text-xl">
@@ -111,7 +191,7 @@ export default async function DashboardPage() {
           </p>
           <WalletSignInPanel sessionWallet={null} className="mt-6" />
         </Card>
-      )}
+      ) : null}
 
       <section aria-labelledby="stack-heading" className="mt-12">
         <SectionLabel id="stack-heading" className="mb-3">
@@ -126,7 +206,11 @@ export default async function DashboardPage() {
               <h3 className="mt-2 text-[15px] font-semibold">{item.role}</h3>
               <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{item.body}</p>
               <div className="mt-auto flex items-center justify-between gap-3 pt-5">
-                <StatusChip tone="muted">NOT INTEGRATED YET</StatusChip>
+                {item.integrated ? (
+                  <StatusChip tone="info">SERVER INTEGRATION</StatusChip>
+                ) : (
+                  <StatusChip tone="muted">NOT INTEGRATED YET</StatusChip>
+                )}
                 <span className="font-mono text-[11px] text-muted">{item.milestone}</span>
               </div>
             </Card>
@@ -169,8 +253,15 @@ export default async function DashboardPage() {
           <div className="mt-5 grid gap-6 sm:grid-cols-2 lg:grid-cols-1">
             <ValueBlock
               label="Pyth reference"
-              value={null}
-              emptyText="Reference data arrives in Milestone 2"
+              value={
+                firstReference?.state.status === "available" ? formatUsd(firstReference.state.reference.priceUsd) : null
+              }
+              meta={
+                firstReference?.state.status === "available"
+                  ? `${firstReference.asset.symbol} · ${firstReference.state.reference.freshness} · ${firstReference.state.reference.symbol}`
+                  : undefined
+              }
+              emptyText={wallet ? "No live reference available yet" : "Sign in to load live reference data"}
             />
             <ValueBlock
               label="Your trigger"

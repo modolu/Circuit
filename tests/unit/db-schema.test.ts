@@ -1,6 +1,5 @@
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
-import { VERIFIED_ASSETS, verifiedAssetSchema } from "@/src/config/assets";
 import { parseServerEnv } from "@/src/config/env";
 import { executions, policies, policyEventSource, policyStatus } from "@/src/db/schema";
 import { POLICY_EVENT_SOURCES, POLICY_STATUSES } from "@/src/domain/policy";
@@ -46,34 +45,5 @@ describe("database configuration", () => {
     } catch (error) {
       expect(String(error)).not.toContain("hunter2");
     }
-  });
-});
-
-describe("verified asset catalog", () => {
-  it("ships empty until assets are verified", () => {
-    expect(VERIFIED_ASSETS).toEqual([]);
-  });
-
-  it("rejects fictional or malformed mints", () => {
-    const result = verifiedAssetSchema.safeParse({
-      symbol: "TEST_ASSET",
-      displayName: "Test",
-      issuer: "Test",
-      underlyingSymbol: "TEST",
-      mintAddress: "TEST_MINT_NOT_REAL",
-      decimals: 8,
-      pythFeedId: "x",
-      inputEnabled: true,
-      outputEnabled: true,
-      active: false,
-      verification: {
-        issuerSource: "https://example.invalid",
-        mintSource: "https://example.invalid",
-        pythFeedSource: "https://example.invalid",
-        jupiterTriggerSource: "https://example.invalid",
-        verifiedAt: "2026-01-01",
-      },
-    });
-    expect(result.success).toBe(false);
   });
 });

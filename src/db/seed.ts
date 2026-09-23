@@ -1,4 +1,4 @@
-import { verifiedAssetSchema, VERIFIED_ASSETS } from "../config/assets.ts";
+import { seedableAssets, verifiedAssetSchema, VERIFIED_ASSETS } from "../config/assets.ts";
 import { closeDb, getDb } from "./client.ts";
 import { upsertAsset } from "./repositories/assets.ts";
 
@@ -12,19 +12,46 @@ import { upsertAsset } from "./repositories/assets.ts";
 
 async function seed(): Promise<void> {
   const configured = VERIFIED_ASSETS.map((entry) => verifiedAssetSchema.parse(entry));
+  const ready = seedableAssets(configured);
 
-  if (configured.length === 0) {
-    console.log("seed: 0 verified assets configured in src/config/assets.ts; nothing written.");
+  for (const asset of configured.filter((entry) => !ready.includes(entry))) {
+    console.log(
+      `seed: skipped ${asset.symbol}: Pyth live check is ${asset.verification.pythLiveCheck.status} (${asset.verification.pythLiveCheck.detail})`,
+    );
+  }
+  if (ready.length === 0) {
+    console.log(`seed: 0 of ${configured.length} configured asset(s) are ready; nothing written.`);
     return;
   }
 
   const db = getDb();
   await db.transaction(async (tx) => {
-    for (const { verification, ...asset } of configured) {
-      await upsertAsset(tx, { ...asset, metadata: { verification } });
+    for (const asset of ready) {
+      await upsertAsset(tx, {
+        symbol: asset.symbol,
+        displayName: asset.displayName,
+        issuer: asset.issuer,
+        underlyingSymbol: asset.underlyingSymbol,
+        mintAddress: asset.mintAddress,
+        decimals: asset.decimals,
+        pythFeedId: String(asset.reference.feedId),
+        active: true,
+        // Execution stays off until Jupiter Trigger compatibility is verified.
+        inputEnabled: asset.execution.status === "VERIFIED",
+        outputEnabled: asset.execution.status === "VERIFIED",
+        metadata: {
+          reference: asset.reference,
+          comparisonFeeds: asset.comparisonFeeds,
+          execution: asset.execution,
+          tokenProgram: asset.tokenProgram,
+          issuerIds: asset.issuerIds,
+          verification: asset.verification,
+          notes: asset.notes,
+        },
+      });
     }
   });
-  console.log(`seed: upserted ${configured.length} verified asset(s): ${configured.map((a) => a.symbol).join(", ")}`);
+  console.log(`seed: upserted ${ready.length} verified asset(s): ${ready.map((a) => a.symbol).join(", ")}`);
 }
 
 try {

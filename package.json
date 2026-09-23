@@ -17,7 +17,8 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env.local --conditions=react-server src/db/migrate.ts",
-    "db:seed": "node --env-file-if-exists=.env.local --conditions=react-server src/db/seed.ts"
+    "db:seed": "node --env-file-if-exists=.env.local --conditions=react-server src/db/seed.ts",
+    "test:live": "CIRCUIT_LIVE_TESTS=1 node --env-file-if-exists=.env.local ./node_modules/vitest/vitest.mjs run"
   },
   "dependencies": {
     "@neondatabase/serverless": "1.1.0",

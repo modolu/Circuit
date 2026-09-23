@@ -429,7 +429,8 @@ No new top-level directory without editing this file.
 │   │   ├── arm-policy.ts
 │   │   ├── cancel-policy.ts
 │   │   ├── reconcile-policy.ts
-│   │   └── get-reference.ts
+│   │   ├── get-reference.ts
+│   │   └── list-assets.ts
 │   │
 │   ├── integrations/
 │   │   ├── pyth/
@@ -457,6 +458,7 @@ No new top-level directory without editing this file.
 │   │   ├── wallet-message.ts
 │   │   ├── verify-wallet.ts
 │   │   ├── session.ts
+│   │   ├── session-token.ts
 │   │   ├── login.ts
 │   │   └── current-wallet.ts
 │   │
@@ -466,6 +468,7 @@ No new top-level directory without editing this file.
 │   │
 │   ├── config/
 │   │   ├── env.ts
+│   │   ├── reference.ts
 │   │   └── assets.ts
 │   │
 │   └── observability/
@@ -630,33 +633,42 @@ All Pyth credentials stay server-side.
 
 Use REST on demand for MVP. Do not own a permanent WebSocket stream unless the UI proves it needs one.
 
-Internal type:
+Transport: `POST {PYTH_BASE_URL}/v1/latest_price` with `Authorization: Bearer <PYTH_API_KEY>`, `parsed: true` and `formats: []`, on the channel configured per asset (at or above the feed's `min_channel`). There is no SDK. Payloads are validated with Zod, and int64/u64 fields keep their exact JSON digits.
+
+Primary reference: each asset's reference is the Pyth feed for its **underlying equity** (e.g. `Equity.US.AAPL/USD`), not the tokenized stock's own market feed (e.g. `Crypto.AAPLX/USD`). Token-market feeds may be recorded as comparison-only metadata, and are never used for compilation.
+
+Internal type (`src/integrations/pyth/mapper.ts`):
 
 ```text
 EquityReference
-- feedId
-- priceUsd
-- confidenceUsd?
-- bestBidUsd?
-- bestAskUsd?
-- feedUpdateTimestamp
-- receivedTimestamp
+- feedId, symbol
+- priceUsd, confidenceUsd?, bestBidUsd?, bestAskUsd?   exact decimal strings (mantissa × 10^exponent)
+- exponent, publisherCount?
+- marketSession?            regular | preMarket | postMarket | overNight | closed
+- feedUpdateTimestamp(+Us)  when this feed's price was generated
+- providerTimestamp         the update's timestampUs
+- receivedTimestamp, ageMs
 - isCarriedForward
-- session?
+- freshness
 ```
 
-Freshness labels:
+Freshness labels, derived only from documented payload fields:
 
 ```text
-FRESH
-CARRIED
-STALE
-UNAVAILABLE
+UNAVAILABLE  feed absent, no price, missing exponent/timestamp, non-positive price,
+             timestamp from the future, or a transport/entitlement/schema failure
+CARRIED      feedUpdateTimestamp < timestampUs (generated in an earlier update), at any age
+STALE        not carried, and received more than MAX_REFERENCE_AGE_MS after generation
+FRESH        not carried, and within MAX_REFERENCE_AGE_MS
 ```
 
-A stale/unavailable reference blocks relative-policy compilation.
+`marketSession` is context. It does not decide freshness.
 
-Do not silently represent carried-forward equity data as live.
+A stale, carried or unavailable reference blocks relative-policy compilation.
+
+Do not silently represent carried-forward equity data as live. Never cache or show a previous value as current when Pyth is unavailable.
+
+`GET /api/reference/[assetId]` requires a Circuit session and resolves the feed from the stored asset only. It never accepts a feed or symbol from the client.
 
 ---
 
@@ -1180,6 +1192,8 @@ Before enabling:
 5. run a tiny quote/order test if possible.
 
 Do not auto-enable scraped assets.
+
+Verified entries live in `src/config/assets.ts` with their sources. `pnpm db:seed` writes an entry only after a live check confirms the deployment's Pyth key can read its reference feed. Until Jupiter compatibility is verified, a seeded asset is `active` (browsable, with a reference) but has `input_enabled = output_enabled = false`.
 
 ---
 

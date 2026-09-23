@@ -241,11 +241,30 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
 
 ## 12. Provider integration boundaries
 
-**Pyth (`src/integrations/pyth/`)**
-- Pyth Pro REST, called on demand server-side with `PYTH_API_KEY`. No browser calls and no Circuit-owned stream.
-- `mapper.ts` converts payloads to the internal `EquityReference` (`feedId, priceUsd, confidenceUsd?, bestBidUsd?, bestAskUsd?, feedUpdateTimestamp, receivedTimestamp, isCarriedForward, session?`) and a freshness label `FRESH | CARRIED | STALE | UNAVAILABLE`.
-- STALE or UNAVAILABLE blocks relative-policy compilation. CARRIED data is never labelled live.
-- Feed IDs come only from the verified catalog. Endpoint paths, field names, and freshness semantics come from current Pyth Pro docs.
+**Pyth (`src/integrations/pyth/`, `src/services/get-reference.ts`)**
+- **Transport:** `POST {PYTH_BASE_URL}/v1/latest_price` (default `https://pyth-lazer.dourolabs.app`) with `Authorization: Bearer PYTH_API_KEY`, `formats: []`, `parsed: true`. Plain `fetch` + Zod, with no Pyth SDK, WebSocket or stream. The key is server-only (`getServerEnv`), never logged or returned. There is no browser-side Pyth call.
+- **Requested properties:** price, exponent, confidence, publisherCount, marketSession, feedUpdateTimestamp, bestBidPrice, bestAskPrice. Bid/ask are experimental in Pyth: display only, never used for safety.
+- **Exactness:** `parsePythJson` keeps int64/u64 JSON numbers (e.g. `confidence`, `feedUpdateTimestamp`) as their exact source digits via Node 22 JSON source-text access. `mantissaToDecimal` applies `× 10^exponent` with string math. There are no floats anywhere.
+- **Primary reference = underlying equity feed** (`Equity.US.<TICKER>/USD`, `role: "underlying_equity"`). The tokenized stock's own feed (e.g. `Crypto.AAPLX/USD`) may be stored as `comparisonFeeds` (`role: "token_market_comparison"`) and is never the reference. Feeds come only from `src/config/assets.ts` via the asset row, never from a request or a runtime ticker lookup.
+- **Freshness** (`src/config/reference.ts`, `mapLatestPrice`):
+  - `CARRIED` if `feedUpdateTimestamp < timestampUs` (Pyth's documented carried-forward signal), at any age.
+  - Otherwise `STALE` if received more than **`MAX_REFERENCE_AGE_MS` = 3000 ms** after generation, else `FRESH`.
+  - `UNAVAILABLE` if the feed is absent, there's no price, the exponent or timestamp is missing, the price is non-positive, or a timestamp is more than 1 s in the future.
+  - Rationale: the channel is **`fixed_rate@200ms`**. AAPL's `min_channel` is `fixed_rate@50ms`, and a slower-or-equal cadence is allowed. A new price is at most ~200 ms old at the router, and 3 s covers the REST round trip plus small clock skew while still flagging a stalled feed quickly.
+  - `marketSession` (`regular | preMarket | postMarket | overNight | closed`) is context only.
+- **Errors:** transport, entitlement, schema or unusable payload → `REFERENCE_UNAVAILABLE` (the reason goes on `cause` for logs). Nothing is cached, and no previous value is ever shown as current.
+- **`GET /api/reference/[assetId]`** requires a Circuit session (so it can't be used as an anonymous proxy for our Pyth quota). `GET /api/assets` is public and returns `PublicAsset` fields only.
+- **E2E:** there is no fake-Pyth mode. Browser tests may point `PYTH_BASE_URL` at a local fixture server.
+
+**Verified asset: AAPLx (`src/config/assets.ts`)**
+- Apple xStock, issuer label "xStocks by Backed". Backed asset id `9e43a778-fdc8-44f1-87de-f2e7420bb7f7`, ISIN CH1436219187, underlying AAPL (ISIN US0378331005, Nasdaq).
+- **Solana mint `XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp`**, Token-2022, **8 decimals**. Sources:
+  - `api.backed.fi/api/v2/public/assets` and `/api/v1/token` (Solana deployment);
+  - mainnet `getParsedAccountInfo` for decimals;
+  - onchain token metadata (name, symbol, `xstocks-metadata.backed.fi` URI).
+- **Mint caveats:** `scaledUiAmountConfig` means wallet UI amounts can differ from raw ÷ 10^decimals, so money math must use raw atomic units. The mint also has permanent delegate, pausable and freeze authority.
+- **Reference:** `Equity.US.AAPL/USD`, Pyth Pro feed **922** (equity/spot, exponent −5, `min_channel` `fixed_rate@50ms`, stable). Comparison only: `Crypto.AAPLX/USD` feed 1792.
+- **Status:** execution `PENDING_JUPITER_VERIFICATION`. `verification.pythLiveCheck` = **`NOT_ENTITLED`**: the current key gets 403 for equity feeds and only reads crypto feeds. `pnpm db:seed` therefore skips AAPLx, and Neon has no assets until an equity-entitled key passes `pnpm test:live` and the config is updated to `PASSED`.
 
 **Jupiter (`src/integrations/jupiter/`)**
 - Server-side only. Provider DTOs never become DB or domain types. The mapping from provider state to Circuit status exists in **one** place.
@@ -280,6 +299,7 @@ Scripts marked ✅ exist and work. The others are added in the milestone that in
 | ✅ Lint | `pnpm lint` (ESLint CLI with `--max-warnings=0`; Next.js 16 no longer ships `next lint`) |
 | ✅ Typecheck | `pnpm typecheck` (`next typegen && tsc --noEmit`; typegen creates the route types `tsc` needs) |
 | ✅ Unit + service tests | `pnpm test` (Vitest run) / `pnpm test:watch` |
+| ✅ Live provider checks (opt-in) | `pnpm test:live`: loads `.env.local` and calls real Pyth (symbology match, key entitlement, live mapping). Never part of `pnpm test` or CI. |
 | ✅ Repository tests (isolated in-process Postgres) | included in `pnpm test`; `tests/integration/` runs the committed migrations on PGlite, never Neon |
 | E2E | `pnpm test:e2e` (Playwright, mock wallet + mock Jupiter) |
 | ✅ Build | `pnpm build` |

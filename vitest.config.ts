@@ -11,7 +11,11 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    include:
+      // Live provider checks are opt-in only (`pnpm test:live`).
+      process.env.CIRCUIT_LIVE_TESTS === "1"
+        ? ["tests/live/**/*.test.ts"]
+        : ["tests/unit/**/*.test.{ts,tsx}", "tests/integration/**/*.test.ts"],
     // Each integration file boots an in-process Postgres (PGlite) and applies the migrations.
     hookTimeout: 60_000,
   },

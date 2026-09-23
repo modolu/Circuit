@@ -19,8 +19,8 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // The env module is the only runtime reader of process.env; drizzle.config.ts is CLI tooling.
-    files: ["src/config/env.ts", "drizzle.config.ts"],
+    // The env module is the only runtime reader of process.env; drizzle/vitest configs are CLI tooling.
+    files: ["src/config/env.ts", "drizzle.config.ts", "vitest.config.ts"],
     rules: { "no-restricted-syntax": "off" },
   },
   globalIgnores([
