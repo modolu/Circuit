@@ -327,3 +327,59 @@ export function seedBlocker(asset: VerifiedAssetConfig): string | null {
   if (asset.jupiter.sides.BUY.result === "RESTRICTED" || asset.jupiter.sides.BUY.result === "FAILED") return "BUY deposit restricted";
   return null;
 }
+
+/**
+ * A verified integration that is NOT executable in this deployment, shown for product
+ * discovery only (/markets, /policies/new). The database `assets` table holds executable
+ * curated assets; this config also holds verified entries whose live reference access is
+ * pending. Nothing here is seeded, selectable into a policy form, or carries a price.
+ */
+export interface PendingIntegration {
+  symbol: string;
+  displayName: string;
+  issuer: string;
+  underlyingSymbol: string;
+  mintAddress: string;
+  referenceProvider: "PYTH";
+  /** e.g. "AAPL/USD" (from the curated Pyth symbol, never a runtime lookup). */
+  referencePair: string;
+  checks: { identity: boolean; mint: boolean; referenceMapping: boolean; jupiterToken: boolean; jupiterRouting: boolean };
+  referenceAccess: "PENDING";
+  execution: "DISABLED";
+}
+
+/**
+ * Pyth-referenced entries whose live reference check has not passed and that are not among
+ * the executable (seeded) assets. Deliberately exposes no check detail or HTTP status.
+ */
+export function pendingIntegrations(
+  executableMints: ReadonlySet<string>,
+  assets: readonly VerifiedAssetConfig[] = ALL_VERIFIED_ASSETS,
+): PendingIntegration[] {
+  return assets.flatMap((asset) => {
+    if (asset.referenceProvider !== "PYTH") return [];
+    if (asset.verification.pythLiveCheck.status === "PASSED" || executableMints.has(asset.mintAddress)) return [];
+    const levels = asset.jupiter.levels;
+    return [
+      {
+        symbol: asset.symbol,
+        displayName: asset.displayName,
+        issuer: asset.issuer,
+        underlyingSymbol: asset.underlyingSymbol,
+        mintAddress: asset.mintAddress,
+        referenceProvider: "PYTH" as const,
+        referencePair: asset.reference.symbol.replace(/^Equity\.[A-Z]+\./, ""),
+        checks: {
+          identity: levels.IDENTITY_VERIFIED?.result === "PASSED",
+          // Schema-enforced: a sourced mint and a sourced Pyth symbol mapping.
+          mint: asset.verification.mintSources.length > 0,
+          referenceMapping: Boolean(asset.verification.pythSymbolSource),
+          jupiterToken: levels.JUPITER_TOKEN_RECOGNIZED?.result === "PASSED",
+          jupiterRouting: levels.SPOT_ROUTE_VERIFIED?.result === "PASSED",
+        },
+        referenceAccess: "PENDING" as const,
+        execution: "DISABLED" as const,
+      },
+    ];
+  });
+}

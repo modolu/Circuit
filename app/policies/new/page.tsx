@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
+import { PendingIntegrationNotice } from "@/components/asset/pending-integration-card";
 import { NewPolicyForm, type FormAsset } from "@/components/policy/new-policy-form";
 import { PolicyBlockedState } from "@/components/policy/policy-blocked-state";
 import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { WalletSignInPanel } from "@/components/wallet/wallet-sign-in-panel";
 import { getSession } from "@/src/auth/session";
-import { ALL_VERIFIED_ASSETS } from "@/src/config/assets";
+import { ALL_VERIFIED_ASSETS, pendingIntegrations } from "@/src/config/assets";
 import { USDC } from "@/src/config/tokens";
 import { getDb } from "@/src/db/client";
 import { toAppError } from "@/src/domain/errors";
@@ -30,7 +31,12 @@ function Header() {
 
 export default async function NewPolicyPage({ searchParams }: PageProps<"/policies/new">) {
   const session = await getSession();
+  const db = getDb();
+  // Executable assets are the database rows; verified-but-disabled integrations (e.g. AAPLx
+  // while Pyth US-equity access is pending) come from curated config and are display-only.
+  const pendingFor = (assets: { mintAddress: string }[]) => pendingIntegrations(new Set(assets.map((asset) => asset.mintAddress)));
   if (!session) {
+    const pending = pendingFor(await listPublicAssets(db).catch(() => []));
     return (
       <main className="mx-auto w-full max-w-[1180px] px-4 pt-8 pb-24 sm:px-6">
         <Header />
@@ -42,12 +48,14 @@ export default async function NewPolicyPage({ searchParams }: PageProps<"/polici
           </p>
           <WalletSignInPanel sessionWallet={null} className="mt-6" />
         </Card>
+        <PendingIntegrationNotice integrations={pending} />
       </main>
     );
   }
 
-  const db = getDb();
-  const usable = (await listPublicAssets(db)).filter((asset) => asset.reference.configured);
+  const assets = await listPublicAssets(db);
+  const pending = pendingFor(assets);
+  const usable = assets.filter((asset) => asset.reference.configured);
 
   if (usable.length === 0) {
     return (
@@ -115,6 +123,7 @@ export default async function NewPolicyPage({ searchParams }: PageProps<"/polici
         referenceError={referenceError}
         quote={{ symbol: USDC.symbol, decimals: USDC.decimals }}
       />
+      <PendingIntegrationNotice integrations={pending} />
     </main>
   );
 }
