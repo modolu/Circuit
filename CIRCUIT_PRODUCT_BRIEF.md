@@ -377,7 +377,8 @@ Current support:
 ```text
 AAPLx (public stock, Pyth reference)
   identity verified · Pyth AAPL/USD mapping verified · Jupiter token + routing verified
-  live execution currently blocked: this environment's Pyth key lacks US-equity entitlement
+  live Pyth US-equity reference verified · BUY policies enabled
+  live SELL disabled: the token's transfer-hook setting restricts it as a Trigger deposit
 
 ANTHROPIC (PreStocks private-market exposure, PreStocks mark reference)
   PreStocks identity verified · exact Solana mint verified · Jupiter token recognition verified
@@ -385,7 +386,7 @@ ANTHROPIC (PreStocks private-market exposure, PreStocks mark reference)
   live SELL disabled: the token's Token-2022 transfer-fee / transfer-hook settings restrict it as a Trigger deposit
 ```
 
-The AAPLx blocker is an access issue in the current environment, not a product limitation: it lifts once an equity-entitled Pyth key passes Circuit's live check.
+AAPLx was briefly blocked by Pyth access, not by the product; the block lifted on 2026-09-24 when this deployment's key passed Circuit's US-equity live check.
 
 ---
 

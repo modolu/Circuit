@@ -394,7 +394,7 @@ export function NewPolicyForm({
 
         <div className="px-5 py-1">
           <ReviewRow label="Reference" sub={prestocks ? "PreStocks · captured when the draft is created" : "Pyth · captured when the draft is created"}>
-            {prestocks ? "PreStocks mark" : asset.referenceSymbol}
+            {prestocks ? "PreStocks mark" : `Pyth ${asset.referenceSymbol.replace(/^Equity\.[A-Z]+\./, "")}`}
           </ReviewRow>
           <ReviewRow label="Your trigger" sub={preview.distance ? `${preview.distance.startsWith("-") ? "" : "+"}${preview.distance}% vs reference` : undefined}>
             <span className="text-base text-accent">
@@ -410,7 +410,7 @@ export function NewPolicyForm({
           <ReviewRow label="Expires" sub="UTC time fixed when the draft is created">
             {EXPIRY_LONG[expiry]} after creation
           </ReviewRow>
-          <ReviewRow label="Execution" sub="Jupiter Trigger monitors the token's own USD price">
+          <ReviewRow label="Execution monitor" sub="Jupiter Trigger monitors the token's own USD price">
             Jupiter {asset.symbol}/USD
           </ReviewRow>
         </div>

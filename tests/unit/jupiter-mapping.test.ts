@@ -180,8 +180,8 @@ describe("reference basis (Pyth AAPL → Jupiter AAPLx)", () => {
     expect(aaplx.referenceBasis.policyReference).toMatch(/Pyth Equity\.US\.AAPL\/USD/);
     expect(aaplx.referenceBasis.executionMonitor).toMatch(/Jupiter Trigger monitors AAPLx\/USD/);
     expect(aaplx.referenceBasis.disclosure).toMatch(/premium or discount to underlying AAPL/);
-    // The Pyth gate is untouched: production stays blocked.
-    expect(aaplx.verification.pythLiveCheck.status).toBe("NOT_ENTITLED");
+    // Pyth US-equity access verified 2026-09-24 (pnpm test:live); the reference basis is unchanged.
+    expect(aaplx.verification.pythLiveCheck.status).toBe("PASSED");
   });
 
   it("no source path applies the ScaledUiAmount multiplier to a price or claims Pyth controls Jupiter", () => {

@@ -125,8 +125,11 @@ beforeAll(async () => {
       }),
     )
   ).id;
+  // Drafts use the fixture instant with a 24h expiry; the deposit route reads the real clock.
+  vi.useFakeTimers({ toFake: ["Date"], now: LIFECYCLE_NOW });
 });
 afterAll(async () => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   await testDb.close();
 });

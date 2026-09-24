@@ -1,12 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AppError } from "@/src/domain/errors";
 import type { PublicAsset } from "@/src/domain/asset";
-import { ANTHROPIC_MINT, prestocksSnapshot } from "../fixtures/references";
+import { ANTHROPIC_MINT, prestocksSnapshot, pythSnapshot } from "../fixtures/references";
 
 /*
- * AAPLx is a verified integration that stays NON-EXECUTABLE while this deployment's Pyth key
- * lacks US-equity access. It is shown from curated config (never seeded), never selectable
- * into the policy form, and never shown with a price.
+ * AAPLx's Pyth US-equity check PASSED (2026-09-24), so it is an executable, seeded asset:
+ * a normal supported card on /markets and a selectable asset on /policies/new. The pending
+ * presentation remains for an environment whose key lacks equity access (NOT_ENTITLED).
  */
 
 const anthropicAsset: PublicAsset = {
@@ -20,18 +21,24 @@ const anthropicAsset: PublicAsset = {
   reference: { provider: "PRESTOCKS", symbol: "ANTHROPIC", label: "PreStocks mark", configured: true },
   execution: { enabled: false, status: "PENDING_JUPITER_VERIFICATION" },
 };
+const aaplxAsset: PublicAsset = {
+  id: "00000000-0000-4000-8000-0000000000b2",
+  symbol: "AAPLx",
+  displayName: "Apple xStock",
+  issuer: "xStocks by Backed",
+  underlyingSymbol: "AAPL",
+  mintAddress: "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
+  decimals: 8,
+  reference: { provider: "PYTH", symbol: "Equity.US.AAPL/USD", label: "Pyth AAPL/USD", configured: true },
+  execution: { enabled: false, status: "PENDING_JUPITER_VERIFICATION" },
+};
 
 let session: { walletAddress: string } | null = null;
+let pythAvailable = true;
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined, push: () => undefined }) }));
 vi.mock("@/src/db/client", () => ({ getDb: () => ({}) }));
 vi.mock("@/src/auth/session", () => ({ getSession: async () => session }));
-vi.mock("@/src/services/list-assets", () => ({ listPublicAssets: async () => [anthropicAsset] }));
-// Any Pyth call fails: PreStocks-referenced pages must not depend on Pyth.
-vi.mock("@/src/integrations/pyth/client", () => ({
-  getPythClient: () => {
-    throw new Error("Pyth unavailable in this test");
-  },
-}));
+vi.mock("@/src/services/list-assets", () => ({ listPublicAssets: async () => [anthropicAsset, aaplxAsset] }));
 vi.mock("@/src/integrations/prestocks/client", () => ({ getPrestocksClient: () => ({}) }));
 vi.mock("@/src/services/prestocks-markets", () => ({
   listPrestocksMarkets: async () => ({
@@ -53,109 +60,123 @@ vi.mock("@/src/services/prestocks-markets", () => ({
     ],
   }),
 }));
+// Each asset's own provider; Pyth can be switched off to prove PreStocks does not depend on it.
 vi.mock("@/src/services/get-reference", () => ({
   defaultReferenceClients: () => ({}),
-  getAssetReference: async () => ({ asset: anthropicAsset, reference: prestocksSnapshot() }),
+  getAssetReference: async (_db: unknown, assetId: string) => {
+    if (assetId === anthropicAsset.id) return { asset: anthropicAsset, reference: prestocksSnapshot() };
+    if (!pythAvailable) throw new AppError("REFERENCE_UNAVAILABLE", "The Pyth reference for this asset is unavailable right now.");
+    return { asset: aaplxAsset, reference: pythSnapshot({ priceUsd: "338.23" }, { symbol: "Equity.US.AAPL/USD", marketSession: "regular" }) };
+  },
 }));
 
-const { pendingIntegrations, seedableAssets, seedBlocker, VERIFIED_ASSETS } = await import("@/src/config/assets");
+const { pendingIntegrations, seedableAssets, VERIFIED_ASSETS } = await import("@/src/config/assets");
+const { PendingIntegrationCard } = await import("@/components/asset/pending-integration-card");
 const { default: MarketsPage } = await import("@/app/markets/page");
 const { default: NewPolicyPage } = await import("@/app/policies/new/page");
 
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
 const aaplx = VERIFIED_ASSETS.find((asset) => asset.symbol === "AAPLx")!;
-const section = (html: string, testId: string) => {
+const card = (html: string, testId: string) => {
   const start = html.indexOf(`data-testid="${testId}"`);
   expect(start).toBeGreaterThan(-1);
   return html.slice(start, html.indexOf("</article>", start) + 10);
 };
 const newPolicyProps = (asset?: string) => ({ params: Promise.resolve({}), searchParams: Promise.resolve(asset ? { asset } : {}) });
+const notEntitled = () => {
+  if (aaplx.referenceProvider !== "PYTH") throw new Error("AAPLx must be Pyth-referenced");
+  return { ...aaplx, verification: { ...aaplx.verification, pythLiveCheck: { ...aaplx.verification.pythLiveCheck, status: "NOT_ENTITLED" as const } } };
+};
 
-describe("pending integrations (curated config, never seeded)", () => {
-  beforeEach(() => {
-    session = null;
+beforeEach(() => {
+  session = null;
+  pythAvailable = true;
+});
+
+describe("AAPLx production config", () => {
+  it("is seedable and no longer a pending integration", () => {
+    expect(seedableAssets().map((asset) => asset.symbol)).toEqual(["AAPLx", "ANTHROPIC"]);
+    expect(pendingIntegrations(new Set())).toEqual([]);
+    expect(pendingIntegrations(new Set([ANTHROPIC_MINT]))).toEqual([]);
   });
+});
 
-  it("lists AAPLx as verified but reference-pending and disabled, without check details", () => {
-    const [pending, ...rest] = pendingIntegrations(new Set([ANTHROPIC_MINT]));
+describe("pending integration (environment without Pyth equity access)", () => {
+  it("lists a NOT_ENTITLED AAPLx as verified but reference-pending and disabled, without check details", () => {
+    const [pending, ...rest] = pendingIntegrations(new Set([ANTHROPIC_MINT]), [notEntitled()]);
     expect(rest).toEqual([]);
     expect(pending).toMatchObject({
       symbol: "AAPLx",
-      underlyingSymbol: "AAPL",
-      mintAddress: aaplx.mintAddress,
-      referenceProvider: "PYTH",
       referencePair: "AAPL/USD",
       checks: { identity: true, mint: true, referenceMapping: true, jupiterToken: true, jupiterRouting: true },
       referenceAccess: "PENDING",
       execution: "DISABLED",
     });
-    // No asset id to submit, and nothing internal (HTTP status, entitlement code) leaks into the view.
     expect(pending).not.toHaveProperty("id");
     expect(JSON.stringify(pending)).not.toMatch(/403|NOT_ENTITLED|entitle|key/i);
+    // Not pending once executable.
+    expect(pendingIntegrations(new Set([aaplx.mintAddress]), [notEntitled()])).toEqual([]);
   });
 
-  it("drops AAPLx once it is executable or its Pyth check passes", () => {
-    expect(pendingIntegrations(new Set([aaplx.mintAddress]))).toEqual([]);
-    if (aaplx.referenceProvider !== "PYTH") throw new Error("AAPLx must be Pyth-referenced");
-    const passed = { ...aaplx, verification: { ...aaplx.verification, pythLiveCheck: { ...aaplx.verification.pythLiveCheck, status: "PASSED" as const } } };
-    expect(pendingIntegrations(new Set(), [passed])).toEqual([]);
-  });
-
-  it("does not seed AAPLx or change its Pyth gate", () => {
-    pendingIntegrations(new Set());
-    if (aaplx.referenceProvider !== "PYTH") throw new Error("AAPLx must be Pyth-referenced");
-    expect(aaplx.verification.pythLiveCheck.status).toBe("NOT_ENTITLED");
-    expect(seedBlocker(aaplx)).not.toBeNull();
-    expect(seedableAssets().map((asset) => asset.symbol)).toEqual(["ANTHROPIC"]);
+  it("renders no price and no action", () => {
+    const [pending] = pendingIntegrations(new Set(), [notEntitled()]);
+    const html = renderToStaticMarkup(<PendingIntegrationCard integration={pending!} />);
+    const c = text(html);
+    expect(c).toContain("REFERENCE ACCESS PENDING");
+    expect(c).toContain("Unavailable in this environment");
+    expect(c).toContain("Circuit execution DISABLED");
+    expect(html).not.toMatch(/<a |<button|<form/);
+    expect(c).not.toMatch(/\$\s?\d|403|NOT_ENTITLED|Crypto\.AAPLX|API key/i);
   });
 });
 
 describe("/markets", () => {
-  it("keeps ANTHROPIC supported and shows AAPLx as a non-executable public-market integration, with Pyth unavailable", async () => {
+  it("shows ANTHROPIC and AAPLx as supported, AAPLx with its live Pyth AAPL reference and no pending card", async () => {
     const html = renderToStaticMarkup(await MarketsPage());
     const t = text(html);
-    const supported = text(html.slice(html.indexOf('data-testid="supported-markets"'), html.indexOf('data-testid="public-market-integrations"')));
-    expect(supported).toContain("ANTHROPIC");
-    expect(supported).toContain("SUPPORTED");
+    expect(html).not.toContain("pending-integration-");
+    expect(t).not.toContain("REFERENCE ACCESS PENDING");
     expect(html).toContain(`href="/policies/new?asset=${anthropicAsset.id}"`);
 
-    expect(t).toContain("Public-market integrations");
-    const card = section(html, "pending-integration-AAPLx");
-    const c = text(card);
-    for (const expected of ["AAPLx", "Apple xStock", "REFERENCE ACCESS PENDING", "Underlying AAPL", "Reference provider Pyth", "AAPL/USD", "Unavailable in this environment", "Circuit execution DISABLED", "Live Pyth equity reference PENDING", "Jupiter routing VERIFIED"]) {
+    const c = text(card(html, "pyth-market-AAPLx"));
+    for (const expected of ["AAPLx", "SUPPORTED", "Reference Pyth AAPL/USD", "$338.23", "FRESH", "Regular", "Token recognized · routing verified"]) {
       expect(c).toContain(expected);
     }
-    expect(c).toContain("This deployment's Pyth access does not currently include the US-equity reference required for AAPLx, so Circuit keeps the asset disabled rather than using substitute or stale data.");
-    // Non-executable, no substitute price, no internal language.
-    expect(card).not.toMatch(/<a |<button|<form/);
+    expect(c).not.toMatch(/PreStocks|Crypto\.AAPLX/);
+    expect(html).toContain(`href="/policies/new?asset=${aaplxAsset.id}"`);
+  });
+
+  it("keeps ANTHROPIC supported when Pyth is unavailable, and shows no AAPL value rather than an old one", async () => {
+    pythAvailable = false;
+    const html = renderToStaticMarkup(await MarketsPage());
+    expect(text(card(html, "supported-markets"))).toMatch(/ANTHROPIC[\s\S]*SUPPORTED/);
+    const c = text(card(html, "pyth-market-AAPLx"));
+    expect(c).toContain("Unavailable right now");
     expect(c).not.toMatch(/\$\s?\d/);
-    expect(c).not.toMatch(/UNSUPPORTED|READY|403|NOT_ENTITLED|Crypto\.AAPLX|API key/i);
   });
 });
 
 describe("/policies/new", () => {
-  it("shows AAPLx as visible but unavailable, outside the form, with ANTHROPIC the only selectable asset", async () => {
+  it("offers ANTHROPIC and AAPLx; AAPLx shows the Pyth reference and the Jupiter execution monitor, with no PreStocks wording", async () => {
     session = { walletAddress: "7nE9GJoYHNmtaQvTQpota3KV2oz4pQ2dA6nvYK8EUJHV" };
-    // Even an explicit request cannot select AAPLx: the form only offers executable database assets.
-    const html = renderToStaticMarkup(await NewPolicyPage(newPolicyProps(aaplx.mintAddress)));
+    const html = renderToStaticMarkup(await NewPolicyPage(newPolicyProps(aaplxAsset.id)));
     const options = [...html.matchAll(/<option[^>]*>([^<]*)<\/option>/g)].map((m) => m[1]);
-    expect(options).toEqual(["ANTHROPIC · Anthropic PreStocks"]);
-    expect(html).toMatch(new RegExp(`<option[^>]*value="${anthropicAsset.id}"[^>]*selected`));
+    expect(options).toEqual(["ANTHROPIC · Anthropic PreStocks", "AAPLx · Apple xStock"]);
+    expect(html).toMatch(new RegExp(`<option[^>]*value="${aaplxAsset.id}"[^>]*selected`));
 
-    const notice = html.slice(html.indexOf('data-testid="pending-integrations"'));
-    const n = text(notice);
-    expect(n).toContain("Other verified integrations");
-    expect(n).toContain("AAPLx");
-    expect(n).toContain("REFERENCE ACCESS PENDING");
-    expect(n).toContain("Verified on Solana and Jupiter. The required Pyth AAPL reference is not available in this deployment.");
-    expect(notice).not.toMatch(/<a |<button|<form|<input|<select/);
-    expect(n).not.toMatch(/\$\s?\d|Create draft|Prepare Jupiter deposit|Arm/);
+    const t = text(html.replace(/<select[\s\S]*?<\/select>/, ""));
+    for (const expected of ["Pyth equity reference", "$338.23", "FRESH", "Regular", "Reference Pyth AAPL/USD", "Execution monitor Jupiter AAPLx/USD", "% from current reference"]) {
+      expect(t).toContain(expected);
+    }
+    expect(t).not.toContain("PreStocks");
+    // A FRESH reference leaves relative triggers enabled; no pending notice remains.
+    expect(html).not.toMatch(/<input[^>]*value="RELATIVE_PERCENT"[^>]*disabled/);
+    expect(html).not.toContain("pending-integrations");
   });
 
-  it("shows the same notice when signed out, with no form", async () => {
-    session = null;
+  it("signed out: no form and no stale pending notice", async () => {
     const html = renderToStaticMarkup(await NewPolicyPage(newPolicyProps()));
     expect(html).not.toContain("<select");
-    expect(text(html)).toContain("The required Pyth AAPL reference is not available in this deployment.");
+    expect(html).not.toContain("pending-integrations");
   });
 });

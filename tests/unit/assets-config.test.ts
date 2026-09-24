@@ -57,10 +57,12 @@ describe("verified asset catalog (Pyth)", () => {
   });
 
   it("seeds a Pyth asset only when its Pyth reference passed a live check", () => {
-    expect(seedableAssets([aaplx])).toEqual(aaplx.verification.pythLiveCheck.status === "PASSED" ? [aaplx] : []);
-    expect(aaplx.verification.pythLiveCheck.status).toBe("NOT_ENTITLED"); // unchanged: still blocked
-    const passed: VerifiedAssetConfig = { ...aaplx, verification: { ...aaplx.verification, pythLiveCheck: { ...aaplx.verification.pythLiveCheck, status: "PASSED" } } };
-    expect(seedableAssets([passed])).toEqual([passed]);
+    expect(aaplx.verification.pythLiveCheck.status).toBe("PASSED"); // pnpm test:live, 2026-09-24
+    expect(seedableAssets([aaplx])).toEqual([aaplx]);
+    // An environment whose key lacks equity access stays blocked.
+    const notEntitled: VerifiedAssetConfig = { ...aaplx, verification: { ...aaplx.verification, pythLiveCheck: { ...aaplx.verification.pythLiveCheck, status: "NOT_ENTITLED" } } };
+    expect(seedableAssets([notEntitled])).toEqual([]);
+    expect(seedBlocker(notEntitled)).toMatch(/NOT_ENTITLED/);
   });
 
   it("rejects fictional mints and non-equity primary references", () => {
@@ -82,7 +84,10 @@ describe("curated PreStocks asset", () => {
     expect("feedId" in anthropic.reference).toBe(false);
     expect("pythLiveCheck" in anthropic.verification).toBe(false);
     expect(seedBlocker(anthropic)).toBeNull();
-    expect(seedableAssets(ALL_VERIFIED_ASSETS).map((a) => a.symbol)).toEqual(["ANTHROPIC"]);
+    expect(seedableAssets(ALL_VERIFIED_ASSETS).map((a) => a.symbol)).toEqual(["AAPLx", "ANTHROPIC"]);
+    // Isolated from Pyth: still seedable next to a Pyth asset whose key lacks equity access.
+    const pythBlocked: VerifiedAssetConfig = { ...aaplx, verification: { ...aaplx.verification, pythLiveCheck: { ...aaplx.verification.pythLiveCheck, status: "NOT_ENTITLED" } } };
+    expect(seedableAssets([pythBlocked, anthropic]).map((a) => a.symbol)).toEqual(["ANTHROPIC"]);
   });
 
   it("records BUY as the only live side, SELL restricted, and the identity reference basis", () => {

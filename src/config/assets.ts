@@ -159,7 +159,7 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
         },
         TRIGGER_DEPOSIT_CRAFT_VERIFIED: {
           result: "NOT_TESTED",
-          detail: "Needs a wallet-signed JWT and a vault. The Task 8/9 prepare path exists but stays blocked by the Pyth live check.",
+          detail: "Needs a wallet-signed JWT and a vault. The Task 8/9 prepare path exists; no deposit has been crafted for AAPLx yet.",
         },
         LIVE_TRIGGER_ORDER_VERIFIED: { result: "NOT_TESTED", detail: "No funded order has been placed (Task 9)." },
       },
@@ -194,10 +194,10 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
       pythSymbolSource: "https://pyth.dourolabs.app/v1/symbols",
       verifiedAt: "2026-09-23",
       pythLiveCheck: {
-        status: "NOT_ENTITLED",
-        checkedAt: "2026-09-23T16:18:10Z",
+        status: "PASSED",
+        checkedAt: "2026-09-24T17:05:38Z",
         detail:
-          "POST /v1/latest_price for feed 922 returned HTTP 403 'Not entitled' (no grant for asset type 'equity'). The key reads crypto feeds (Crypto.BTC/USD returned 200). Needs a Pyth Pro key with US equity entitlement.",
+          "pnpm test:live 3/3 PASS with the deployment's existing key (US-equity access now granted): feed 922 Equity.US.AAPL/USD (equity, stable, min_channel fixed_rate@50ms) returned a FRESH regular-session price from 19 publishers, not carried forward. Earlier (2026-09-23T16:18:10Z) the same key was NOT_ENTITLED (HTTP 403, no equity grant).",
       },
     },
     notes: [

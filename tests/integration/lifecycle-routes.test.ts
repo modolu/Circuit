@@ -3,7 +3,7 @@ import { upsertWalletSeen } from "@/src/db/repositories/wallets";
 import type { Wallet } from "@/src/db/schema";
 import { AppError } from "@/src/domain/errors";
 import { fakeWalletAddress } from "../fixtures/db";
-import { lifecycleWorld } from "../fixtures/lifecycle";
+import { LIFECYCLE_NOW, lifecycleWorld } from "../fixtures/lifecycle";
 import { createTestDb } from "./test-db";
 
 let testDb: Awaited<ReturnType<typeof createTestDb>>;
@@ -28,8 +28,12 @@ let world: Awaited<ReturnType<typeof lifecycleWorld>>;
 beforeAll(async () => {
   testDb = await createTestDb();
   world = await lifecycleWorld(testDb.db);
+  // Drafts are created at the fixture instant with a 24h expiry; routes read the real clock,
+  // so pin Date to that instant or the test starts failing a day after the fixture date.
+  vi.useFakeTimers({ toFake: ["Date"], now: LIFECYCLE_NOW });
 });
 afterAll(async () => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   await testDb.close();
 });

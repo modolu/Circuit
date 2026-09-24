@@ -35,7 +35,7 @@ The reference and the execution market are deliberately distinct. Circuit compil
 | Asset | Reference | Status |
 |---|---|---|
 | **ANTHROPIC** (PreStocks) | PreStocks mark | Live reference; exact mint, Jupiter recognition and USDC route verified; BUY policies enabled |
-| **AAPLx** (xStocks) | Pyth AAPL/USD | Identity, Pyth mapping and Jupiter routing verified; waiting on a Pyth key with US-equity entitlement in this environment |
+| **AAPLx** (xStocks) | Pyth AAPL/USD | Live Pyth US-equity reference; identity, exact mint, Jupiter recognition and USDC route verified; BUY policies enabled |
 
 ## Core safety model
 
@@ -92,11 +92,11 @@ pnpm test:jupiter-live     # Jupiter key, token, quote-only route, Trigger auth 
 pnpm test:live             # Pyth symbology and key entitlement
 ```
 
-The live probes move no funds: no taker, no signing, no deposit, no order. `pnpm test:live` depends on the Pyth key's entitlements and currently reports that US-equity access is not granted.
+The live probes move no funds: no taker, no signing, no deposit, no order. `pnpm test:live` depends on the Pyth key's entitlements; this deployment's key passes the US-equity check.
 
 ## Demo
 
-1. **Markets**: live PreStocks marks, token market prices and premium/discount; ANTHROPIC is supported by Circuit.
+1. **Markets**: live PreStocks marks, token market prices and premium/discount; ANTHROPIC (PreStocks mark) and AAPLx (Pyth AAPL/USD) are supported by Circuit.
 2. **New policy** with ANTHROPIC: BUY 3% below the PreStocks mark; Circuit shows the compiled USD trigger and the plain-English policy.
 3. Save the **DRAFT** and open it: captured mark snapshot, compiled trigger, audit trail.
 4. **Jupiter lifecycle**: connect Jupiter (off-chain sign-in) and the vault, then prepare → review → explicit deposit signature → ARMED → reconcile → cancel & withdraw.
@@ -106,7 +106,6 @@ A funded live order has not been executed yet.
 ## Status and limitations
 
 - Live SELL is disabled for the current assets: their Token-2022 transfer-hook/transfer-fee settings restrict them as Jupiter Trigger deposits.
-- AAPLx live execution waits for a Pyth key with US-equity entitlement in this environment.
 - Jupiter Trigger V2 is in beta.
 - Live funded-order proof is not completed yet.
 

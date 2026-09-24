@@ -1,18 +1,22 @@
 import type { Metadata } from "next";
 import { formatUtc } from "@/components/asset/format";
 import { PendingIntegrationCard } from "@/components/asset/pending-integration-card";
+import { PythMarketCard } from "@/components/asset/pyth-market-card";
 import { PRESTOCKS_DISCLOSURE, PrestocksMarkSummary } from "@/components/prestocks/mark-summary";
 import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { StatusChip, type ChipTone } from "@/components/ui/status-chip";
 import { shortAddress } from "@/components/wallet/short-address";
-import { pendingIntegrations } from "@/src/config/assets";
+import { ALL_VERIFIED_ASSETS, pendingIntegrations } from "@/src/config/assets";
 import { PRESTOCKS_DISCOVERY_CHECKED_AT } from "@/src/config/prestocks";
 import { getDb } from "@/src/db/client";
 import { getPrestocksClient } from "@/src/integrations/prestocks/client";
 import { logger } from "@/src/observability/logger";
 import { cn } from "@/components/ui/cn";
+import { toAppError } from "@/src/domain/errors";
+import type { PythReferenceSnapshot } from "@/src/domain/reference";
+import { defaultReferenceClients, getAssetReference } from "@/src/services/get-reference";
 import { listPublicAssets } from "@/src/services/list-assets";
 import { listPrestocksMarkets, type MarketSupportState, type PrestocksMarketRow } from "@/src/services/prestocks-markets";
 
@@ -68,6 +72,27 @@ function MarketCard({ row }: { row: PrestocksMarketRow }) {
   );
 }
 
+/** The live Pyth reference, or null (logged) when unavailable: never an earlier value. */
+async function pythReference(assetId: string): Promise<PythReferenceSnapshot | null> {
+  try {
+    const { reference } = await getAssetReference(getDb(), assetId, defaultReferenceClients());
+    return reference.provider === "PYTH" ? reference : null;
+  } catch (error) {
+    const appError = toAppError(error);
+    logger.warn("markets.pyth_reference_unavailable", { assetId, code: appError.code, reason: typeof appError.cause === "string" ? appError.cause : undefined });
+    return null;
+  }
+}
+
+/** Recorded no-funds Jupiter checks from the curated config (exact mint match). */
+function jupiterChecks(mintAddress: string) {
+  const levels = ALL_VERIFIED_ASSETS.find((entry) => entry.mintAddress === mintAddress)?.jupiter.levels;
+  return {
+    tokenRecognized: levels?.JUPITER_TOKEN_RECOGNIZED?.result === "PASSED",
+    routingVerified: levels?.SPOT_ROUTE_VERIFIED?.result === "PASSED",
+  };
+}
+
 export default async function MarketsPage() {
   const db = getDb();
   const markets = await listPrestocksMarkets(db, { prestocks: getPrestocksClient() });
@@ -75,7 +100,11 @@ export default async function MarketsPage() {
   // Executable assets come from the database; verified-but-disabled integrations (e.g. AAPLx
   // while Pyth US-equity access is pending) come from the curated config and are never seeded.
   const executable = await listPublicAssets(db).catch(() => []);
-  const publicEquityEnabled = executable.some((asset) => asset.reference.provider === "PYTH");
+  const pythAssets = await Promise.all(
+    executable
+      .filter((asset) => asset.reference.provider === "PYTH" && asset.reference.configured)
+      .map(async (asset) => ({ asset, reference: await pythReference(asset.id), jupiter: jupiterChecks(asset.mintAddress) })),
+  );
   const pending = pendingIntegrations(new Set(executable.map((asset) => asset.mintAddress)));
   const rows = markets.status === "available" ? markets.rows : [];
   const supportedRows = rows.filter((row) => row.support.state === "SUPPORTED");
@@ -120,19 +149,23 @@ export default async function MarketsPage() {
             {formatUtc(PRESTOCKS_DISCOVERY_CHECKED_AT)}
             {markets.rejectedCount > 0 ? ` · ${markets.rejectedCount} malformed item(s) skipped` : ""}
           </p>
-          {supportedRows.length > 0 && (
-            <section aria-labelledby="markets-available" className="mb-8">
-              <SectionLabel id="markets-available" className="mb-3">
-                Available in Circuit
-              </SectionLabel>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="supported-markets">
-                {supportedRows.map((row) => (
-                  <MarketCard key={row.contractAddress} row={row} />
-                ))}
-              </div>
-            </section>
-          )}
         </>
+      )}
+
+      {supportedRows.length + pythAssets.length > 0 && (
+        <section aria-labelledby="markets-available" className="mb-8">
+          <SectionLabel id="markets-available" className="mb-3">
+            Available in Circuit
+          </SectionLabel>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="supported-markets">
+            {supportedRows.map((row) => (
+              <MarketCard key={row.contractAddress} row={row} />
+            ))}
+            {pythAssets.map(({ asset, reference, jupiter }) => (
+              <PythMarketCard key={asset.id} asset={asset} reference={reference} jupiter={jupiter} />
+            ))}
+          </div>
+        </section>
       )}
 
       {pending.length > 0 && (
@@ -164,7 +197,6 @@ export default async function MarketsPage() {
 
       <p className="mt-8 max-w-[760px] text-xs leading-relaxed text-muted">
         {PRESTOCKS_DISCLOSURE}
-        {publicEquityEnabled ? " Public-equity tokens (such as AAPLx, referenced by Pyth) appear on the dashboard." : ""}
       </p>
     </main>
   );
