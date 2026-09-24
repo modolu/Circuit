@@ -1,0 +1,5 @@
+# Never upload local env files or tooling state to Vercel (builds use Vercel env vars).
+.env*
+!.env.example
+.vercel
+tsconfig.tsbuildinfo
