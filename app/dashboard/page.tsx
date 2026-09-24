@@ -25,35 +25,30 @@ export const metadata: Metadata = {
   title: "Policies",
 };
 
-// Milestone numbers refer to CIRCUIT_ARCHITECTURE.md §32.
 const INFRASTRUCTURE = [
   {
     provider: "Pyth",
     role: "Public-equity reference",
     body: "Independent underlying-equity price and freshness for tokenized public stocks.",
-    milestone: "Milestone 2",
-    integrated: true,
+    status: "SERVER INTEGRATION",
   },
   {
     provider: "PreStocks",
     role: "Private-market reference",
     body: "First-party mark price and token market price for tokenized private-company exposure.",
-    milestone: "Task 10",
-    integrated: true,
+    status: "SERVER INTEGRATION",
   },
   {
     provider: "Jupiter Trigger",
     role: "Execution rail",
     body: "Autonomous price-trigger execution that keeps running without Circuit or your browser.",
-    milestone: "Milestone 4",
-    integrated: true,
+    status: "LIVE INTEGRATION",
   },
   {
     provider: "Solana",
     role: "Settlement evidence",
     body: "Final transaction evidence for every fill, linked from the policy's audit trail.",
-    milestone: "Milestone 6",
-    integrated: false,
+    status: "EXPLORER EVIDENCE",
   },
 ] as const;
 
@@ -179,7 +174,7 @@ export default async function DashboardPage() {
           </h2>
           <p className="mt-2 max-w-[520px] text-[13px] leading-relaxed text-muted">
             Draft a bounded policy for a verified stock token. Drafts are saved here with their captured reference
-            (Pyth for public equities, the PreStocks mark for private-company tokens); arming with Jupiter comes in a later milestone.
+            (Pyth for public equities, the PreStocks mark for private-company tokens); arming asks your wallet to authorize a Jupiter deposit.
           </p>
           <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-start">
             <ButtonLink href="/policies/new" variant="primary" size="lg">
@@ -249,13 +244,8 @@ export default async function DashboardPage() {
               </p>
               <h3 className="mt-2 text-[15px] font-semibold">{item.role}</h3>
               <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{item.body}</p>
-              <div className="mt-auto flex items-center justify-between gap-3 pt-5">
-                {item.integrated ? (
-                  <StatusChip tone="info">SERVER INTEGRATION</StatusChip>
-                ) : (
-                  <StatusChip tone="muted">NOT INTEGRATED YET</StatusChip>
-                )}
-                <span className="font-mono text-[11px] text-muted">{item.milestone}</span>
+              <div className="mt-auto pt-5">
+                <StatusChip tone="info">{item.status}</StatusChip>
               </div>
             </Card>
           ))}
@@ -311,7 +301,7 @@ export default async function DashboardPage() {
               label="Your trigger"
               value={null}
               emphasis="accent"
-              emptyText="Compiled from your policy in Milestone 3"
+              emptyText="Compiled when you create a policy"
             />
           </div>
         </Card>

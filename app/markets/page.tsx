@@ -10,6 +10,8 @@ import { PRESTOCKS_DISCOVERY_CHECKED_AT } from "@/src/config/prestocks";
 import { getDb } from "@/src/db/client";
 import { getPrestocksClient } from "@/src/integrations/prestocks/client";
 import { logger } from "@/src/observability/logger";
+import { cn } from "@/components/ui/cn";
+import { listPublicAssets } from "@/src/services/list-assets";
 import { listPrestocksMarkets, type MarketSupportState } from "@/src/services/prestocks-markets";
 
 export const metadata: Metadata = { title: "Markets" };
@@ -23,8 +25,12 @@ const SUPPORT: Record<MarketSupportState, { tone: ChipTone; label: string }> = {
 };
 
 export default async function MarketsPage() {
-  const markets = await listPrestocksMarkets(getDb(), { prestocks: getPrestocksClient() });
+  const db = getDb();
+  const markets = await listPrestocksMarkets(db, { prestocks: getPrestocksClient() });
   if (markets.status === "unavailable") logger.warn("markets.prestocks_unavailable", { reason: markets.reason });
+  const publicEquityEnabled = (await listPublicAssets(db).catch(() => [])).some((asset) => asset.reference.provider === "PYTH");
+  // Circuit-supported products first; otherwise keep PreStocks' own catalog order.
+  const rows = markets.status === "available" ? [...markets.rows].sort((a, b) => Number(b.support.state === "SUPPORTED") - Number(a.support.state === "SUPPORTED")) : [];
 
   return (
     <main className="mx-auto w-full max-w-[1180px] px-4 pt-8 pb-24 sm:px-6">
@@ -47,16 +53,35 @@ export default async function MarketsPage() {
         </Card>
       ) : (
         <>
+          <dl className="mb-4 grid gap-2 rounded-lg border border-line bg-panel-2 px-4 py-3 text-xs leading-relaxed sm:grid-cols-3">
+            <div>
+              <dt className="font-semibold">PreStocks mark</dt>
+              <dd className="text-muted">PreStocks&apos; reference value. Circuit compiles your trigger from it.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold">Token market price</dt>
+              <dd className="text-muted">The onchain token&apos;s price. This is what Jupiter monitors.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold">Premium / discount</dt>
+              <dd className="text-muted">How far the token trades above or below the mark.</dd>
+            </div>
+          </dl>
           <p className="mb-3 font-mono text-[11px] text-muted">
             PreStocks response received {formatUtc(markets.receivedAt, true)} · support states checked{" "}
             {formatUtc(PRESTOCKS_DISCOVERY_CHECKED_AT)}
             {markets.rejectedCount > 0 ? ` · ${markets.rejectedCount} malformed item(s) skipped` : ""}
           </p>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="prestocks-markets">
-            {markets.rows.map((row) => {
+            {rows.map((row) => {
               const support = SUPPORT[row.support.state];
               return (
-                <Card as="article" key={row.contractAddress} aria-labelledby={`market-${row.symbol}`} className="flex flex-col p-5">
+                <Card
+                  as="article"
+                  key={row.contractAddress}
+                  aria-labelledby={`market-${row.symbol}`}
+                  className={cn("flex flex-col p-5", row.support.state === "SUPPORTED" && "border-accent/60")}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <SectionLabel>{row.name}</SectionLabel>
@@ -75,7 +100,7 @@ export default async function MarketsPage() {
                       {shortAddress(row.contractAddress)}
                     </dd>
                   </dl>
-                  <p className="text-xs leading-relaxed text-muted">{row.support.detail}</p>
+                  <p className="text-[11px] leading-relaxed text-muted">{row.support.detail}</p>
                   <div className="mt-auto flex flex-wrap items-center gap-3 pt-4">
                     {row.assetId && (
                       <ButtonLink href={`/policies/new?asset=${row.assetId}`} variant="primary">
@@ -94,7 +119,10 @@ export default async function MarketsPage() {
       )}
 
       <p className="mt-8 max-w-[760px] text-xs leading-relaxed text-muted">
-        {PRESTOCKS_DISCLOSURE} Public-equity tokens (such as AAPLx, referenced by Pyth) appear on the dashboard.
+        {PRESTOCKS_DISCLOSURE}{" "}
+        {publicEquityEnabled
+          ? "Public-equity tokens (such as AAPLx, referenced by Pyth) appear on the dashboard."
+          : "Public-equity tokens such as AAPLx use Pyth as their reference; public-equity reference access is not available in this environment yet."}
       </p>
     </main>
   );
