@@ -22,7 +22,7 @@ describe("schema matches CIRCUIT_ARCHITECTURE.md", () => {
   });
 
   it("keeps USD values as exact decimal strings", () => {
-    for (const column of [policies.compiledTriggerUsd, policies.pythReferenceUsd, executions.effectivePriceUsd]) {
+    for (const column of [policies.compiledTriggerUsd, policies.referenceUsd, executions.effectivePriceUsd]) {
       expect(column.getSQLType()).toBe("numeric");
       expect(column.dataType).toBe("string");
     }

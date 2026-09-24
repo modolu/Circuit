@@ -144,6 +144,8 @@ Solana
 = source of truth for final transaction settlement
 ```
 
+Task 10 replaced `pyth_reference_usd`, `pyth_feed_timestamp` and `pyth_snapshot_json` with the generic columns above (migrations `0006` add, `0007` drop; Neon had no policies). Pyth-specific detail (feed id, market session, carried-forward state) lives only inside a PYTH snapshot.
+
 Mock mode (`CIRCUIT_JUPITER_MODE=mock`) is hackathon/demo infrastructure. Its simulated provider state (§5.8) stands in for Jupiter only in demos. It is never real Jupiter order truth and never Solana settlement truth, and everything it produces is labelled simulated.
 
 For reference market data:
@@ -192,7 +194,8 @@ issuer              text NOT NULL
 underlying_symbol   text NOT NULL
 mint_address        text UNIQUE NOT NULL
 decimals            smallint NOT NULL
-pyth_feed_id        text NOT NULL
+reference_provider  enum PYTH | PRESTOCKS NOT NULL      (Task 10: which curated reference provider)
+pyth_feed_id        text NULL                           (PYTH only; CHECK (reference_provider = 'PYTH') = (pyth_feed_id IS NOT NULL))
 input_enabled       boolean NOT NULL default true
 output_enabled      boolean NOT NULL default true
 active              boolean NOT NULL default true
@@ -205,7 +208,8 @@ Rules:
 
 - users cannot submit arbitrary mint addresses in MVP;
 - never map by ticker alone;
-- verified mint is mandatory.
+- verified mint is mandatory;
+- a PRESTOCKS asset never gets a fake Pyth feed id; its reference configuration (exact contract address = mint, first-party API/product URLs) lives in `metadata.reference`.
 
 ### 5.3 `policies`
 
@@ -237,9 +241,11 @@ status                     enum
                            EXPIRED
                            FAILED
 
-pyth_reference_usd         numeric NOT NULL
-pyth_feed_timestamp        timestamptz NOT NULL
-pyth_snapshot_json         jsonb NOT NULL
+reference_provider         enum PYTH | PRESTOCKS NOT NULL
+reference_usd              numeric NOT NULL      (captured reference: Pyth price, or PreStocks mark; exact source digits)
+reference_timestamp        timestamptz NOT NULL  (provider source time when it exists (Pyth feedUpdateTimestamp);
+                                                  PreStocks publishes none, so the time Circuit received the response)
+reference_snapshot_json    jsonb NOT NULL        (provider-labelled snapshot; see §10)
 
 provider                   text NOT NULL default 'jupiter_trigger_v2'
 provider_order_id          text NULL
@@ -497,6 +503,7 @@ No new top-level directory without editing this file.
 │   ├── policies/
 │   │   ├── new/page.tsx
 │   │   └── [policyId]/page.tsx
+│   ├── markets/page.tsx         (PreStocks catalog: mark, token price, premium/discount, support state)
 │   └── api/
 │       ├── _lib/http.ts              (shared JSON envelope + error mapping; not a route)
 │       ├── assets/route.ts
@@ -525,6 +532,7 @@ No new top-level directory without editing this file.
 ├── components/
 │   ├── wallet/
 │   ├── jupiter/        (live-mode Jupiter auth + vault panel)
+│   ├── prestocks/      (mark / token price / premium-discount summary, disclosure)
 │   ├── policy/live-order-panel.tsx (live prepare → review → sign; ARMING/ARMED/withdrawal states)
 │   ├── policy/
 │   ├── asset/
@@ -539,6 +547,7 @@ No new top-level directory without editing this file.
 │   │   ├── policy.ts
 │   │   ├── money.ts
 │   │   ├── asset.ts
+│   │   ├── reference.ts   (provider-labelled reference snapshot types; Task 10)
 │   │   └── errors.ts
 │   │
 │   ├── services/
@@ -549,6 +558,7 @@ No new top-level directory without editing this file.
 │   │   ├── reconcile-policy.ts
 │   │   ├── get-reference.ts
 │   │   ├── list-assets.ts
+│   │   ├── prestocks-markets.ts   (catalog rows + technical support state)
 │   │   ├── policy-view.ts
 │   │   ├── policy-lifecycle.ts
 │   │   ├── simulate-provider-fill.ts   (mock mode only)
@@ -564,6 +574,10 @@ No new top-level directory without editing this file.
 │   │       └── errors.ts           (Jupiter failure → AppError, live-mode and JWT guards)
 │   │
 │   ├── integrations/
+│   │   ├── prestocks/
+│   │   │   ├── client.ts   (first-party catalog; exact JSON digits; no key)
+│   │   │   ├── mapper.ts   (per-item validation, exact mint, premium/discount)
+│   │   │   └── types.ts
 │   │   ├── pyth/
 │   │   │   ├── client.ts
 │   │   │   ├── mapper.ts
@@ -582,6 +596,7 @@ No new top-level directory without editing this file.
 │   ├── db/
 │   │   ├── client.ts
 │   │   ├── schema.ts
+│   │   ├── asset-rows.ts   (curated config → assets row; used by seed and tests)
 │   │   ├── repositories/
 │   │   │   ├── assets.ts
 │   │   │   ├── wallets.ts
@@ -610,7 +625,8 @@ No new top-level directory without editing this file.
 │   │   ├── env.ts
 │   │   ├── reference.ts
 │   │   ├── tokens.ts
-│   │   └── assets.ts
+│   │   ├── assets.ts       (curated execution assets: PYTH and PRESTOCKS)
+│   │   └── prestocks.ts    (display-only discovery results, keyed by exact mint)
 │   │
 │   └── observability/
 │       └── logger.ts
@@ -789,7 +805,32 @@ Compilation must be deterministic and heavily unit-tested.
 
 ---
 
-## 10. Pyth integration
+## 10. Reference providers
+
+Task 10 generalized the reference layer. The curated asset config (§27) names each asset's provider; a request can never choose it, and there is no fallback between providers. `getAssetReference` (`src/services/get-reference.ts`) switches on the provider and returns a provider-labelled snapshot (`src/domain/reference.ts`):
+
+```text
+common      provider · referenceType · priceUsd (exact) · freshness · timestampKind · sourceTimestamp · receivedTimestamp
+PYTH        referenceType UNDERLYING_EQUITY · freshness FRESH|CARRIED|STALE · timestampKind SOURCE
+            pyth: feedId, symbol, confidence, publisherCount, marketSession, feedUpdateTimestamp, ageMs, isCarriedForward
+PRESTOCKS   referenceType MARK_PRICE · freshness CURRENT_RESPONSE · timestampKind RECEIVED · sourceTimestamp null
+            prestocks: name, symbol, contractAddress, markPriceUsd, tokenPriceUsd?, premiumPercent?, productUrl, apiUrl
+```
+
+The compiler is unchanged: `compiledTriggerUsd` is compiled from `priceUsd` (absolute or relative, stricter-direction cents). Provider wording lives in presentation (e.g. "% from PreStocks mark").
+
+### 10.1 PreStocks provider (Task 10)
+
+Source: `GET https://prestocks.com/api/prestocks` (first-party, public, no key; verified 2026-09-24). Each item: `name, symbol, description, image, external_url, contract_address, markPrice, markValuation, tokenPrice, impliedValuation, supply`. No timestamps.
+
+- **Mark vs token price.** PreStocks labels them "Mark Price" and "Token Price". The mark is PreStocks' benchmark value and Circuit's policy reference; the token price is the onchain token's market price. Circuit shows premium (+) / discount (−) = (token − mark) / mark × 100, exact decimal maths, 2 dp. The mark is not called an oracle and is not a redemption guarantee.
+- **Precision.** Prices arrive as JSON numbers; the client keeps their exact source digits (Node 22 JSON source text, like Pyth). No JS number arithmetic. Display rounds to cents; the trigger compiles to cents; the snapshot stores the exact mark, so an old policy is reproducible without the live API.
+- **Freshness.** No per-price timestamp exists, so none is invented: `CURRENT_RESPONSE` means a successful response Circuit just received (`receivedTimestamp`), not that the mark updated then. Relative triggers require a current response with a valid mark for the exact curated mint. A missing token price does not block compilation (only premium/discount becomes unavailable).
+- **Identity.** Only first-party prestocks.com sources establish identity and the mint; the mint must equal `contract_address`. Jupiter may confirm execution compatibility but is not the identity authority. Never CoinGecko/CMC/token lists, never ticker-derived mints, never HTML scraping for prices (product pages are read only by the no-funds probe, for lifecycle notices).
+- **Failure.** API unavailable → `REFERENCE_UNAVAILABLE`, no draft, nothing cached; existing policies render from their snapshot; `/markets` shows "Reference temporarily unavailable". One malformed item never invalidates the others.
+- **Reference basis.** Same pattern as Pyth → AAPLx (§11): the mark is the reference; Jupiter monitors the PreStocks token's own USD price against the unchanged compiled target; the review discloses that the token may trade at a premium or discount to the mark. The mark is captured once at creation; live orders are never adjusted when the mark changes.
+
+### 10.2 Pyth provider
 
 All Pyth credentials stay server-side.
 
@@ -1435,6 +1476,9 @@ No ad-hoc production schema changes.
 
 ## 27. Asset catalog workflow
 
+**Curated execution assets vs discovery (Task 10).** The PreStocks API is discovery/reference data. A PreStocks product becomes an execution asset only when curated in `src/config/assets.ts` after passing: first-party identity, a valid Solana mint (exact contract address), Jupiter exact-mint recognition, a USDC route, and the BUY Trigger deposit rule. `pnpm db:seed` also re-checks that the live first-party catalog still lists that exact mint. `/markets` shows the whole catalog with a technical support state (`SUPPORTED`, `ROUTE_VERIFIED`, `UNVERIFIED`, `NOT_ELIGIBLE` for lifecycle notices such as SpaceX's public listing) from `src/config/prestocks.ts`, keyed by exact mint; none of those rows is executable. Tessera or other non-PreStocks pre-IPO tokens are out of scope. PRESTOCKS assets never require Pyth entitlement; PYTH assets never use PreStocks.
+
+
 Adding an asset requires:
 
 ```text
@@ -1558,6 +1602,11 @@ Never show a generic **Sign** button with no explanation.
 **Context:** keeper execution belongs to Jupiter.  
 **Choice:** status sync only.  
 **Rejected:** Circuit worker holding broad user authority.
+
+### D-009 — PreStocks as a second reference provider (Task 10, final feature expansion)
+**Context:** PreStocks sponsor bounty; private-company tokens have no Pyth equity feed.
+**Choice:** provider-aware reference layer; PreStocks mark as reference, Jupiter Trigger on the PreStocks token as execution; one curated asset (ANTHROPIC), BUY only.
+**Rejected:** a second product, a second compiler, seeding the whole catalog, fake Pyth mappings, cross-provider fallback.
 
 ### D-008 — No custom program
 **Context:** no MVP requirement forces one.  

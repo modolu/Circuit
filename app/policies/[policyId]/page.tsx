@@ -5,16 +5,18 @@ import { formatSession, formatUtc } from "@/components/asset/format";
 import { LiveOrderPanel } from "@/components/policy/live-order-panel";
 import { PolicyActions } from "@/components/policy/policy-actions";
 import { SolscanLink } from "@/components/policy/solscan-link";
+import { PRESTOCKS_DISCLOSURE, PrestocksMarkSummary } from "@/components/prestocks/mark-summary";
 import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { POLICY_STATUS_TONE, StatusChip } from "@/components/ui/status-chip";
 import { shortAddress } from "@/components/wallet/short-address";
 import { WalletSignInPanel } from "@/components/wallet/wallet-sign-in-panel";
 import { getAuthenticatedWallet } from "@/src/auth/current-wallet";
+import { ALL_VERIFIED_ASSETS } from "@/src/config/assets";
 import { USDC } from "@/src/config/tokens";
 import { readJupiterJwt } from "@/src/auth/jupiter-session";
 import { getDb } from "@/src/db/client";
-import { formatUsd, fromAtomicUnits } from "@/src/domain/money";
+import { formatUsd, formatUsdCents, fromAtomicUnits } from "@/src/domain/money";
 import { describeSlippage } from "@/src/domain/policy";
 import { toAppError } from "@/src/domain/errors";
 import { getJupiterClient } from "@/src/integrations/jupiter/client";
@@ -26,9 +28,15 @@ import { getPolicyViewForWallet } from "@/src/services/policy-view";
 
 export const metadata: Metadata = { title: "Policy" };
 
+/** Curated token-level caveat (e.g. a PreStocks Token-2022 transfer fee), by exact mint. */
+function tokenNoteFor(mintAddress: string): string | null {
+  const asset = ALL_VERIFIED_ASSETS.find((entry) => entry.mintAddress === mintAddress);
+  return asset?.referenceProvider === "PRESTOCKS" ? asset.tokenRestrictions.detail : null;
+}
+
 const EVENT_LABELS: Record<string, string> = {
   POLICY_CREATED: "Policy drafted",
-  REFERENCE_CAPTURED: "Pyth reference captured",
+  REFERENCE_CAPTURED: "Reference captured",
   POLICY_COMPILED: "Policy compiled",
   POLICY_ARMING: "Arming started",
   PROVIDER_ORDER_CREATED: "Provider confirmed order",
@@ -188,9 +196,30 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
         </div>
 
         <div className="flex flex-col gap-5 lg:sticky lg:top-[76px]">
-          <Card as="section" aria-label="Captured Pyth reference" className="p-5">
-            <SectionLabel tone="accent">Captured Pyth reference</SectionLabel>
-            {policy.reference ? (
+          <Card as="section" aria-label="Captured reference" className="p-5">
+            <SectionLabel tone="accent">
+              {policy.reference?.provider === "PRESTOCKS" ? "Captured PreStocks mark" : "Captured Pyth reference"}
+            </SectionLabel>
+            {policy.reference?.provider === "PRESTOCKS" ? (
+              <>
+                <p className="mt-2 font-mono text-[28px] leading-none">{formatUsdCents(policy.reference.priceUsd)}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <StatusChip tone="info">CURRENT RESPONSE</StatusChip>
+                  <span className="font-mono text-[11px] text-muted">received {formatUtc(policy.reference.timestamp, true)}</span>
+                </div>
+                <div className="mt-3">
+                  <PrestocksMarkSummary
+                    markPriceUsd={policy.reference.priceUsd}
+                    tokenPriceUsd={policy.reference.tokenPriceUsd}
+                    premiumPercent={policy.reference.premiumPercent}
+                  />
+                </div>
+                <p className="mt-3 text-[11px] leading-relaxed text-muted">
+                  Captured exact mark {policy.reference.priceUsd} (shown to cents). PreStocks publishes no per-price timestamp;
+                  this is when Circuit received it. {PRESTOCKS_DISCLOSURE}
+                </p>
+              </>
+            ) : policy.reference ? (
               <>
                 <p className="mt-2 font-mono text-[28px] leading-none">{formatUsd(policy.reference.priceUsd)}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -201,7 +230,7 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
                 </div>
                 <dl className="mt-3">
                   <Row term="Feed">{policy.reference.symbol}</Row>
-                  <Row term="Feed updated">{formatUtc(policy.reference.feedUpdateTimestamp, true)}</Row>
+                  <Row term="Feed updated">{formatUtc(policy.reference.timestamp, true)}</Row>
                 </dl>
               </>
             ) : (
@@ -298,6 +327,7 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
                     assetSymbol: policy.asset.symbol,
                     amountDisplay: policy.amount.display,
                     amountSymbol: policy.amount.symbol,
+                    referenceProvider: policy.reference?.provider ?? "PYTH",
                     referenceSymbol: policy.reference?.symbol ?? null,
                     referenceUsd: policy.reference?.priceUsd ?? null,
                     compiledTriggerUsd: policy.compiledTriggerUsd,
@@ -307,6 +337,7 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
                     policyReference: readiness.referenceBasis?.policyReference ?? null,
                     executionMonitor: readiness.referenceBasis?.executionMonitor ?? null,
                     disclosure: readiness.referenceBasis?.disclosure ?? null,
+                    tokenNote: tokenNoteFor(policy.asset.mintAddress),
                   }}
                   live={live ? { depositPreparationId: live.depositPreparationId, depositTxSignature: live.depositTxSignature, pendingWithdrawal: live.pendingWithdrawal } : null}
                 />

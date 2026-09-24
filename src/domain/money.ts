@@ -110,3 +110,12 @@ export function formatTokenAmount(decimal: string): string {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return fraction ? `${grouped}.${fraction}` : grouped;
 }
+
+/**
+ * Display-only: rounds to cents (half-even) before formatting. Provider prices such as the
+ * PreStocks mark carry float64-derived digits; those are stored exactly but never shown as
+ * if they were meaningful beyond cents.
+ */
+export function formatUsdCents(decimal: string): string {
+  return formatUsd(roundToScale(decimal, 2, "HALF_EVEN"));
+}

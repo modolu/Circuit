@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { PublicAsset } from "@/src/domain/asset";
-import type { EquityReference } from "@/src/integrations/pyth/mapper";
+import { prestocksSnapshot, pythSnapshot } from "../fixtures/references";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined }) }));
 const { AssetReferenceCard } = await import("@/components/asset/asset-reference-card");
@@ -14,29 +14,12 @@ const asset: PublicAsset = {
   underlyingSymbol: "AAPL",
   mintAddress: "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
   decimals: 8,
-  reference: { provider: "pyth_pro", symbol: "Equity.US.AAPL/USD", configured: true },
+  reference: { provider: "PYTH", symbol: "Equity.US.AAPL/USD", label: "Pyth AAPL/USD", configured: true },
   execution: { enabled: false, status: "PENDING_JUPITER_VERIFICATION" },
 };
 
 // Test values only.
-const reference: EquityReference = {
-  feedId: 922,
-  symbol: "Equity.US.AAPL/USD",
-  priceUsd: "1234.5",
-  confidenceUsd: "0.0125",
-  bestBidUsd: null,
-  bestAskUsd: null,
-  exponent: -5,
-  publisherCount: 7,
-  marketSession: "regular",
-  feedUpdateTimestamp: "2026-09-23T15:00:00.000Z",
-  feedUpdateTimestampUs: "1790175600000000",
-  providerTimestamp: "2026-09-23T15:00:00.000Z",
-  receivedTimestamp: "2026-09-23T15:00:00.400Z",
-  ageMs: 400,
-  isCarriedForward: false,
-  freshness: "FRESH",
-};
+const reference = pythSnapshot();
 
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
@@ -50,7 +33,7 @@ describe("AssetReferenceCard", () => {
     expect(html).toContain("Equity.US.AAPL/USD");
     expect(html).toContain("XsbE…JzJp");
     expect(html).toContain("EXECUTION PENDING");
-    expect(html).toMatch(/Jupiter Trigger compatibility is not verified yet/);
+    expect(html).toMatch(/No live order has been verified for it yet/);
     expect(html).not.toMatch(/Jupiter ready|routable/i);
   });
 
@@ -59,7 +42,7 @@ describe("AssetReferenceCard", () => {
       renderToStaticMarkup(
         <AssetReferenceCard
           asset={asset}
-          state={{ status: "available", reference: { ...reference, freshness: "CARRIED", isCarriedForward: true, marketSession: "closed" } }}
+          state={{ status: "available", reference: pythSnapshot({ freshness: "CARRIED" }, { isCarriedForward: true, marketSession: "closed" }) }}
         />,
       ),
     );
@@ -76,5 +59,37 @@ describe("AssetReferenceCard", () => {
     );
     expect(html).toContain("UNAVAILABLE");
     expect(html).not.toMatch(/\$\d/);
+  });
+});
+
+describe("AssetReferenceCard (PreStocks)", () => {
+  const prestocksAsset: PublicAsset = {
+    ...asset,
+    symbol: "ANTHROPIC",
+    displayName: "Anthropic PreStocks",
+    issuer: "PreStocks",
+    underlyingSymbol: "Anthropic",
+    mintAddress: "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw",
+    decimals: 9,
+    reference: { provider: "PRESTOCKS", symbol: "ANTHROPIC", label: "PreStocks mark", configured: true },
+  };
+
+  it("shows the PreStocks mark, token price and discount, never Pyth, with the honest timestamp and disclosure", () => {
+    const html = text(renderToStaticMarkup(<AssetReferenceCard asset={prestocksAsset} state={{ status: "available", reference: prestocksSnapshot() }} />));
+    expect(html).toContain("PreStocks mark");
+    expect(html).toContain("$1,000.00");
+    expect(html).toContain("Token market price $986.10");
+    expect(html).toContain("Discount to mark 1.39%");
+    expect(html).toContain("CURRENT RESPONSE");
+    expect(html).toContain("PreStocks publishes no per-price timestamp");
+    expect(html).toContain("not ownership, voting or other legal rights");
+    expect(html).not.toMatch(/Pyth/);
+    expect(html).not.toMatch(/undervalued|overvalued|opportunity|good entry/i);
+  });
+
+  it("shows an unavailable mark without inventing a price", () => {
+    const html = text(renderToStaticMarkup(<AssetReferenceCard asset={prestocksAsset} state={{ status: "unavailable", message: "The PreStocks mark for this asset is unavailable right now." }} />));
+    expect(html).toContain("UNAVAILABLE");
+    expect(html).not.toContain("$");
   });
 });

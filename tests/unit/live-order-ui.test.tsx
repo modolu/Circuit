@@ -6,7 +6,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined
 vi.mock("@solana/wallet-adapter-react", () => ({
   useWallet: () => ({ publicKey: null, connected: false, signTransaction: undefined }),
 }));
-const { LiveOrderPanel, LiveOrderReview, DEPOSIT_AUTHORIZATION_TEXT, REAL_TRANSACTION_WARNING } = await import("@/components/policy/live-order-panel");
+const { LiveOrderPanel, LiveOrderReview, depositAuthorizationText, REAL_TRANSACTION_WARNING } = await import("@/components/policy/live-order-panel");
 const { SolscanLink, isRealSignature } = await import("@/components/policy/solscan-link");
 type Props = Parameters<typeof LiveOrderPanel>[0];
 
@@ -15,6 +15,7 @@ const SIG = "5".repeat(87);
 
 const review: Props["review"] = {
   assetSymbol: "AAPLx",
+  referenceProvider: "PYTH",
   amountDisplay: "25",
   amountSymbol: "USDC",
   referenceSymbol: "Equity.US.AAPL/USD",
@@ -75,10 +76,31 @@ describe("live order review", () => {
   });
 
   it("uses the required authorization wording", () => {
-    expect(DEPOSIT_AUTHORIZATION_TEXT).toBe(
+    expect(depositAuthorizationText("AAPLx")).toBe(
       "Signing this transaction authorizes the displayed USDC amount to be deposited into your Jupiter Trigger vault. If the subsequent order creation succeeds, Jupiter will monitor AAPLx/USD and execute under the policy shown above.",
     );
     expect(REAL_TRANSACTION_WARNING).toBe("This is a real Solana transaction and can move funds.");
+  });
+});
+
+describe("live order review (PreStocks)", () => {
+  it("says PreStocks provides the mark and Jupiter monitors the token's own price, with the fee caveat", () => {
+    const prestocksReview: Props["review"] = {
+      ...review,
+      assetSymbol: "ANTHROPIC",
+      referenceProvider: "PRESTOCKS",
+      referenceSymbol: "ANTHROPIC",
+      referenceUsd: "1000.00",
+      compiledTriggerUsd: "970.00",
+      disclosure: "The ANTHROPIC token may trade at a premium or discount to the PreStocks mark.",
+      tokenNote: "Token-2022 transfer fee: 100 bps (1.00%).",
+    };
+    const t = text(renderToStaticMarkup(<LiveOrderReview review={prestocksReview} vaultAddress={WALLET} />));
+    for (const expected of ["PreStocks mark (ANTHROPIC)", "Captured PreStocks mark $1,000.00", "$970.00", "Jupiter ANTHROPIC/USD", "premium or discount to the PreStocks mark", "PreStocks provides the reference mark", "transfer fee"]) {
+      expect(t).toContain(expected);
+    }
+    expect(t).not.toMatch(/Pyth/);
+    expect(depositAuthorizationText("ANTHROPIC")).toContain("Jupiter will monitor ANTHROPIC/USD");
   });
 });
 

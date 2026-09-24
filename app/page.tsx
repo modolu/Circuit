@@ -16,7 +16,7 @@ const STEPS = [
 const FLOW = [
   { layer: "User intent", detail: "you decide" },
   { layer: "Circuit policy", detail: "bounded · deterministic", highlight: true },
-  { layer: "Reference + validation", detail: "Pyth equity reference" },
+  { layer: "Reference + validation", detail: "Pyth equity reference · PreStocks mark" },
   { layer: "Trigger order", detail: "Jupiter Trigger V2" },
   { layer: "Onchain fill", detail: "Solana transaction" },
   { layer: "Audit trail", detail: "every transition logged", highlight: true },
@@ -28,7 +28,7 @@ export default async function ConnectPage() {
     <main className="mx-auto grid w-full max-w-[1180px] items-center gap-12 px-4 py-14 sm:px-6 lg:min-h-[calc(100dvh-56px-60px)] lg:grid-cols-[1.1fr_1fr] lg:gap-14 lg:py-16">
       <div>
         <SectionLabel tone="accent" className="mb-[18px]">
-          Policy-controlled execution · Solana
+          Programmable execution for tokenized public and private stocks
         </SectionLabel>
         <h1 className="text-[32px] leading-[1.08] font-semibold tracking-[-0.025em] sm:text-[44px]">
           Stocks that never sleep.
@@ -36,9 +36,9 @@ export default async function ConnectPage() {
           <span className="text-accent">Execution that doesn&apos;t need you awake.</span>
         </h1>
         <p className="mt-5 mb-8 max-w-[460px] text-base leading-relaxed text-muted">
-          Define a bounded rule for a tokenized stock once. Circuit validates it against independent
-          equity reference data, compiles it into an autonomous order, and keeps the evidence of
-          exactly what happened.
+          Define a bounded rule for a tokenized stock once. Circuit checks it against a reference (Pyth for public
+          equities, the PreStocks mark for tokenized private-company exposure), compiles it into an autonomous order,
+          and keeps the evidence of exactly what happened.
         </p>
 
         <WalletSignInPanel

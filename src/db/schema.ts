@@ -15,6 +15,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { REFERENCE_PROVIDERS } from "../domain/asset.ts";
 import {
   DEFAULT_EXECUTION_PROVIDER,
   LIVE_PROVIDER_STATES,
@@ -39,6 +40,7 @@ const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode
 const atomicAmount = (name: string) => numeric(name, { precision: 78, scale: 0, mode: "bigint" });
 const usdDecimal = (name: string) => numeric(name, { mode: "string" });
 
+export const referenceProvider = pgEnum("reference_provider", REFERENCE_PROVIDERS);
 export const policySide = pgEnum("policy_side", POLICY_SIDES);
 export const triggerDirection = pgEnum("trigger_direction", TRIGGER_DIRECTIONS);
 export const sourceExpressionType = pgEnum("source_expression_type", SOURCE_EXPRESSION_TYPES);
@@ -79,7 +81,10 @@ export const assets = pgTable(
     underlyingSymbol: text("underlying_symbol").notNull(),
     mintAddress: text("mint_address").notNull().unique(),
     decimals: smallint("decimals").notNull(),
-    pythFeedId: text("pyth_feed_id").notNull(),
+    /** Which curated reference provider this asset uses (Task 10). Never chosen by a request. */
+    referenceProvider: referenceProvider("reference_provider").notNull(),
+    /** Pyth feed id for PYTH assets only; NULL for PRESTOCKS (no fake feed ids). */
+    pythFeedId: text("pyth_feed_id"),
     inputEnabled: boolean("input_enabled").notNull().default(true),
     outputEnabled: boolean("output_enabled").notNull().default(true),
     active: boolean("active").notNull().default(true),
@@ -90,7 +95,10 @@ export const assets = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [check("assets_decimals_range", sql`${t.decimals} BETWEEN 0 AND 255`)],
+  (t) => [
+    check("assets_decimals_range", sql`${t.decimals} BETWEEN 0 AND 255`),
+    check("assets_pyth_feed_matches_provider", sql`(${t.referenceProvider} = 'PYTH') = (${t.pythFeedId} IS NOT NULL)`),
+  ],
 );
 
 const providerBackedList = sql.raw(PROVIDER_BACKED_STATUSES.map((status) => `'${status}'`).join(", "));
@@ -122,9 +130,16 @@ export const policies = pgTable(
 
     status: policyStatus("status").notNull().default("DRAFT"),
 
-    pythReferenceUsd: usdDecimal("pyth_reference_usd").notNull(),
-    pythFeedTimestamp: timestamptz("pyth_feed_timestamp").notNull(),
-    pythSnapshotJson: jsonb("pyth_snapshot_json").$type<Record<string, unknown>>().notNull(),
+    /** Generic captured reference (Task 10): provider, exact USD value, timestamp and snapshot. */
+    referenceProvider: referenceProvider("reference_provider").notNull(),
+    referenceUsd: usdDecimal("reference_usd").notNull(),
+    /**
+     * The provider's own source timestamp when it has one (Pyth feedUpdateTimestamp); for
+     * PreStocks, which publishes none, the time Circuit received the response. The snapshot
+     * records which (`timestampKind`).
+     */
+    referenceTimestamp: timestamptz("reference_timestamp").notNull(),
+    referenceSnapshotJson: jsonb("reference_snapshot_json").$type<Record<string, unknown>>().notNull(),
 
     provider: text("provider").notNull().default(DEFAULT_EXECUTION_PROVIDER),
     providerOrderId: text("provider_order_id"),

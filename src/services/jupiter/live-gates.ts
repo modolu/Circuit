@@ -10,10 +10,11 @@ import { meetsProviderMinimum } from "../../integrations/jupiter/trigger.ts";
 
 /*
  * Live Jupiter eligibility, shared by deposit preparation, arming and the policy page.
- * Order: BUY only → active asset → Pyth live check PASSED → Jupiter BUY deposit
+ * Order: BUY only → active asset → the provider's own live reference check PASSED (Pyth for
+ * public equities, PreStocks for private-market tokens) → Jupiter BUY deposit
  * compatible → reference basis RESOLVED → USDC → stock-token mints → ≥ 10 USD.
  * Missing or malformed evidence fails closed. Production AAPLx stays blocked while the
- * Pyth key is NOT_ENTITLED.
+ * Pyth key is NOT_ENTITLED; a PreStocks asset never depends on Pyth.
  */
 
 export const LIVE_SELL_DISABLED_MESSAGE =
@@ -21,6 +22,7 @@ export const LIVE_SELL_DISABLED_MESSAGE =
 
 const GATE_MESSAGES = {
   PYTH_LIVE_CHECK_REQUIRED: "Live execution for this asset needs a verified live Pyth reference first.",
+  PRESTOCKS_REFERENCE_CHECK_REQUIRED: "Live execution for this asset needs a verified PreStocks mark reference first.",
   BUY_DEPOSIT_NOT_COMPATIBLE: "Jupiter Trigger deposits for this asset have not been verified as compatible.",
   REFERENCE_BASIS_UNRESOLVED:
     "Live execution for this asset is blocked until its Pyth reference → Jupiter execution-price basis is recorded.",

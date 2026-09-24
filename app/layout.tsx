@@ -16,11 +16,11 @@ const publicEnv = getPublicEnv();
 export const metadata: Metadata = {
   metadataBase: new URL(publicEnv.NEXT_PUBLIC_APP_URL),
   title: {
-    default: "Circuit: policy-controlled execution for tokenized stocks",
+    default: "Circuit: programmable execution for tokenized public and private stocks",
     template: "%s | Circuit",
   },
   description:
-    "Define a bounded execution policy for a tokenized stock once. Circuit validates it against an independent Pyth equity reference and compiles it into a Jupiter Trigger order on Solana.",
+    "Define a bounded execution policy for a tokenized stock once. Circuit checks it against a reference (Pyth for public equities, the PreStocks mark for private-company tokens) and compiles it into a Jupiter Trigger order on Solana.",
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {

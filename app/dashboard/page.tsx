@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { AssetReferenceCard, type ReferenceState } from "@/components/asset/asset-reference-card";
-import { formatUsd } from "@/components/asset/format";
+import { formatUsdCents } from "@/src/domain/money";
 import { JupiterConnection } from "@/components/jupiter/jupiter-connection";
 import { PolicyList } from "@/components/policy/policy-list";
 import { ButtonLink } from "@/components/ui/button";
@@ -16,9 +16,8 @@ import { getDb } from "@/src/db/client";
 import type { PublicAsset } from "@/src/domain/asset";
 import { toAppError } from "@/src/domain/errors";
 import { getExecutionMode } from "@/src/integrations/jupiter/provider";
-import { getPythClient } from "@/src/integrations/pyth/client";
 import { logger } from "@/src/observability/logger";
-import { getAssetReference } from "@/src/services/get-reference";
+import { defaultReferenceClients, getAssetReference } from "@/src/services/get-reference";
 import { listPublicAssets } from "@/src/services/list-assets";
 import { listPolicyViewsForWallet, type PolicyView } from "@/src/services/policy-view";
 
@@ -30,9 +29,16 @@ export const metadata: Metadata = {
 const INFRASTRUCTURE = [
   {
     provider: "Pyth",
-    role: "Reference data",
-    body: "Independent market context and freshness for each supported stock token.",
+    role: "Public-equity reference",
+    body: "Independent underlying-equity price and freshness for tokenized public stocks.",
     milestone: "Milestone 2",
+    integrated: true,
+  },
+  {
+    provider: "PreStocks",
+    role: "Private-market reference",
+    body: "First-party mark price and token market price for tokenized private-company exposure.",
+    milestone: "Task 10",
     integrated: true,
   },
   {
@@ -86,7 +92,7 @@ type CatalogState =
   | { status: "loaded"; entries: Array<{ asset: PublicAsset; state: ReferenceState }> }
   | { status: "unavailable" };
 
-/** Loads curated assets and one live Pyth reference each. Failures become honest states, never old values. */
+/** Loads curated assets and one live reference each, from each asset's own provider. Failures become honest states, never old values. */
 async function loadCatalog(): Promise<CatalogState> {
   const db = getDb();
   let assets: PublicAsset[];
@@ -96,11 +102,11 @@ async function loadCatalog(): Promise<CatalogState> {
     logger.error("dashboard.catalog_failed", { error: error instanceof Error ? error : undefined });
     return { status: "unavailable" };
   }
-  const pyth = getPythClient();
+  const clients = defaultReferenceClients();
   const entries = await Promise.all(
     assets.map(async (asset) => {
       try {
-        const { reference } = await getAssetReference(db, asset.id, { pyth });
+        const { reference } = await getAssetReference(db, asset.id, clients);
         return { asset, state: { status: "available", reference } as ReferenceState };
       } catch (error) {
         const appError = toAppError(error);
@@ -172,8 +178,8 @@ export default async function DashboardPage() {
             No policies yet.
           </h2>
           <p className="mt-2 max-w-[520px] text-[13px] leading-relaxed text-muted">
-            Draft a bounded policy for a verified stock token. Drafts are saved here with their captured Pyth
-            reference; arming with Jupiter comes in a later milestone.
+            Draft a bounded policy for a verified stock token. Drafts are saved here with their captured reference
+            (Pyth for public equities, the PreStocks mark for private-company tokens); arming with Jupiter comes in a later milestone.
           </p>
           <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-start">
             <ButtonLink href="/policies/new" variant="primary" size="lg">
@@ -203,8 +209,8 @@ export default async function DashboardPage() {
             <Card className="px-5 py-8 sm:px-6">
               <p className="text-[15px] font-semibold">No verified assets are enabled yet.</p>
               <p className="mt-2 max-w-[560px] text-[13px] leading-relaxed text-muted">
-                An asset appears here once its issuer, Solana mint and Pyth equity feed have been verified and
-                Circuit&apos;s Pyth access can read that feed.
+                An asset appears here once its issuer, Solana mint and reference (a Pyth equity feed, or a
+                PreStocks mark) have been verified and Circuit can read that reference live.
               </p>
             </Card>
           ) : (
@@ -235,7 +241,7 @@ export default async function DashboardPage() {
         <SectionLabel id="stack-heading" className="mb-3">
           Infrastructure roles
         </SectionLabel>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {INFRASTRUCTURE.map((item) => (
             <Card as="article" key={item.provider} className="flex flex-col p-5">
               <p className="font-mono text-xs font-medium tracking-[0.08em] text-accent uppercase">
@@ -290,13 +296,13 @@ export default async function DashboardPage() {
           <SectionLabel id="review-heading">What you review before arming</SectionLabel>
           <div className="mt-5 grid gap-6 sm:grid-cols-2 lg:grid-cols-1">
             <ValueBlock
-              label="Pyth reference"
+              label={firstReference?.asset.reference.label ?? "Reference"}
               value={
-                firstReference?.state.status === "available" ? formatUsd(firstReference.state.reference.priceUsd) : null
+                firstReference?.state.status === "available" ? formatUsdCents(firstReference.state.reference.priceUsd) : null
               }
               meta={
                 firstReference?.state.status === "available"
-                  ? `${firstReference.asset.symbol} · ${firstReference.state.reference.freshness} · ${firstReference.state.reference.symbol}`
+                  ? `${firstReference.asset.symbol} · ${firstReference.state.reference.freshness} · ${firstReference.asset.reference.symbol}`
                   : undefined
               }
               emptyText={wallet ? "No live reference available yet" : "Sign in to load live reference data"}

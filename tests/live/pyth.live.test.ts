@@ -32,7 +32,9 @@ describe("Pyth Pro connectivity", () => {
   });
 });
 
-describe.each(VERIFIED_ASSETS.map((asset) => [asset.symbol, asset] as const))("%s live Pyth checks", (_symbol, asset) => {
+const PYTH_ASSETS = VERIFIED_ASSETS.flatMap((asset) => (asset.referenceProvider === "PYTH" ? [asset] : []));
+
+describe.each(PYTH_ASSETS.map((asset) => [asset.symbol, asset] as const))("%s live Pyth checks", (_symbol, asset) => {
   it("configured feeds match current Pyth symbology", async () => {
     const symbols = (await (await fetch(SYMBOLS_URL)).json()) as PythSymbol[];
     const primary = symbols.find((s) => s.pyth_lazer_id === asset.reference.feedId);

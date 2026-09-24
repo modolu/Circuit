@@ -5,15 +5,16 @@ import { appendPolicyEvent, insertPolicy } from "../db/repositories/policies.ts"
 import type { Wallet } from "../db/schema.ts";
 import { AppError } from "../domain/errors.ts";
 import { POLICY_EVENT_TYPES } from "../domain/policy.ts";
+import { referenceTimestamp } from "../domain/reference.ts";
 import type { CreatePolicyRequest } from "../validation/policy.ts";
 import { compilePolicy } from "./compile-policy.ts";
 import type { AssetReference } from "./get-reference.ts";
 import { toPolicyView, type PolicyView } from "./policy-view.ts";
 
 /**
- * Loads the curated asset and a live Pyth reference for it. Production passes
- * `getAssetReference` backed by the real Pyth client; tests inject fixtures.
- * Callers can never supply a reference price.
+ * Loads the curated asset and a live reference for it from the asset's own provider
+ * (Pyth or PreStocks). Production passes `getAssetReference` with the real clients;
+ * tests inject fixtures. Callers can never supply a reference price or provider.
  */
 export type ReferenceLoader = (db: Database, assetId: string) => Promise<AssetReference>;
 
@@ -62,9 +63,10 @@ export async function createPolicyDraft(
       maxSlippageBps: compiled.slippageBps,
       expiresAt: compiled.expiresAt,
       status: "DRAFT",
-      pythReferenceUsd: reference.priceUsd,
-      pythFeedTimestamp: new Date(reference.feedUpdateTimestamp),
-      pythSnapshotJson: { ...reference },
+      referenceProvider: reference.provider,
+      referenceUsd: reference.priceUsd,
+      referenceTimestamp: referenceTimestamp(reference),
+      referenceSnapshotJson: { ...reference },
       createdAt: now,
     });
 
@@ -88,16 +90,31 @@ export async function createPolicyDraft(
       policyId: created.id,
       eventType: POLICY_EVENT_TYPES.REFERENCE_CAPTURED,
       source: "CIRCUIT",
-      payload: {
-        provider: "pyth_pro",
-        feedId: reference.feedId,
-        symbol: reference.symbol,
-        priceUsd: reference.priceUsd,
-        freshness: reference.freshness,
-        marketSession: reference.marketSession,
-        feedUpdateTimestamp: reference.feedUpdateTimestamp,
-        receivedTimestamp: reference.receivedTimestamp,
-      },
+      // Circuit captured the reference; the payload names the provider it came from.
+      payload:
+        reference.provider === "PYTH"
+          ? {
+              provider: "PYTH",
+              feedId: reference.pyth.feedId,
+              symbol: reference.pyth.symbol,
+              priceUsd: reference.priceUsd,
+              freshness: reference.freshness,
+              marketSession: reference.pyth.marketSession,
+              feedUpdateTimestamp: reference.pyth.feedUpdateTimestamp,
+              receivedTimestamp: reference.receivedTimestamp,
+            }
+          : {
+              provider: "PRESTOCKS",
+              referenceType: "MARK_PRICE",
+              symbol: reference.prestocks.symbol,
+              contractAddress: reference.prestocks.contractAddress,
+              markPriceUsd: reference.prestocks.markPriceUsd,
+              tokenPriceUsd: reference.prestocks.tokenPriceUsd,
+              premiumPercent: reference.prestocks.premiumPercent,
+              freshness: reference.freshness,
+              receivedTimestamp: reference.receivedTimestamp,
+              productUrl: reference.prestocks.productUrl,
+            },
     });
     await appendPolicyEvent(tx, {
       policyId: created.id,

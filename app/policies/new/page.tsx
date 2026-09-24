@@ -5,14 +5,14 @@ import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { WalletSignInPanel } from "@/components/wallet/wallet-sign-in-panel";
 import { getSession } from "@/src/auth/session";
-import { VERIFIED_ASSETS } from "@/src/config/assets";
+import { ALL_VERIFIED_ASSETS } from "@/src/config/assets";
 import { USDC } from "@/src/config/tokens";
 import { getDb } from "@/src/db/client";
 import { toAppError } from "@/src/domain/errors";
-import { getPythClient } from "@/src/integrations/pyth/client";
-import type { EquityReference } from "@/src/integrations/pyth/mapper";
+import type { ReferenceSnapshot } from "@/src/domain/reference";
+import { referenceName } from "@/src/domain/reference";
 import { logger } from "@/src/observability/logger";
-import { getAssetReference } from "@/src/services/get-reference";
+import { defaultReferenceClients, getAssetReference } from "@/src/services/get-reference";
 import { listPublicAssets } from "@/src/services/list-assets";
 
 export const metadata: Metadata = { title: "New policy" };
@@ -54,13 +54,17 @@ export default async function NewPolicyPage({ searchParams }: PageProps<"/polici
       <main className="mx-auto w-full max-w-[1180px] px-4 pt-8 pb-24 sm:px-6">
         <Header />
         <PolicyBlockedState
-          configured={VERIFIED_ASSETS.map((asset) => ({
+          configured={ALL_VERIFIED_ASSETS.map((asset) => ({
             symbol: asset.symbol,
             displayName: asset.displayName,
             mintAddress: asset.mintAddress,
-            referenceSymbol: asset.reference.symbol,
-            referenceFeedId: asset.reference.feedId,
-            liveReferenceAccess: asset.verification.pythLiveCheck.status,
+            referenceLabel: asset.referenceProvider === "PYTH" ? "Pyth mapping" : "PreStocks mark mapping",
+            referenceDetail:
+              asset.referenceProvider === "PYTH"
+                ? `${asset.reference.symbol} · feed ${asset.reference.feedId}`
+                : `${asset.reference.symbol} · prestocks.com API`,
+            liveReferenceAccess:
+              asset.referenceProvider === "PYTH" ? asset.verification.pythLiveCheck.status : asset.verification.prestocksLiveCheck.status,
             jupiterRoutingVerified:
               asset.jupiter.levels.JUPITER_TOKEN_RECOGNIZED?.result === "PASSED" &&
               asset.jupiter.levels.SPOT_ROUTE_VERIFIED?.result === "PASSED",
@@ -74,10 +78,10 @@ export default async function NewPolicyPage({ searchParams }: PageProps<"/polici
   const requested = (await searchParams).asset;
   const selected = usable.find((asset) => asset.id === requested) ?? usable[0]!;
 
-  let reference: EquityReference | null = null;
+  let reference: ReferenceSnapshot | null = null;
   let referenceError: string | null = null;
   try {
-    reference = (await getAssetReference(db, selected.id, { pyth: getPythClient() })).reference;
+    reference = (await getAssetReference(db, selected.id, defaultReferenceClients())).reference;
   } catch (error) {
     const appError = toAppError(error);
     referenceError = appError.message;
@@ -96,6 +100,8 @@ export default async function NewPolicyPage({ searchParams }: PageProps<"/polici
     mintAddress: asset.mintAddress,
     decimals: asset.decimals,
     referenceSymbol: asset.reference.symbol,
+    referenceProvider: asset.reference.provider,
+    referenceName: referenceName(asset.reference.provider, asset.underlyingSymbol),
   });
 
   return (

@@ -3,7 +3,10 @@ import { upsertAsset } from "@/src/db/repositories/assets";
 import { upsertWalletSeen } from "@/src/db/repositories/wallets";
 import type { Wallet } from "@/src/db/schema";
 import { AppError } from "@/src/domain/errors";
+import { PRESTOCKS_ASSETS } from "@/src/config/assets";
+import { assetRowFromConfig } from "@/src/db/asset-rows";
 import { fakeCatalogAsset } from "../fixtures/catalog";
+import { prestocksResponseText } from "../fixtures/references";
 import { fakeWalletAddress } from "../fixtures/db";
 import { equityResponseText } from "../fixtures/pyth";
 import { createTestDb } from "./test-db";
@@ -22,16 +25,19 @@ vi.mock("@/src/auth/current-wallet", () => ({
 
 const { POST } = await import("@/app/api/policies/route");
 let assetId: string;
+let prestocksAssetId: string;
 
 beforeAll(async () => {
   vi.stubEnv("PYTH_API_KEY", "test-key-not-real");
-  vi.stubGlobal("fetch", async () => {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    if (String(input).includes("prestocks.com")) return new Response(prestocksResponseText(), { status: 200 });
     if (pythStatus !== 200) return new Response("Not entitled", { status: pythStatus });
     const nowUs = BigInt(Date.now()) * 1000n;
     return new Response(equityResponseText({ updateUs: nowUs, feedUpdateUs: nowUs }), { status: 200 });
   });
   testDb = await createTestDb();
   assetId = (await upsertAsset(testDb.db, fakeCatalogAsset())).id;
+  prestocksAssetId = (await upsertAsset(testDb.db, assetRowFromConfig(PRESTOCKS_ASSETS[0]!))).id;
 });
 afterAll(async () => {
   vi.unstubAllEnvs();
@@ -88,5 +94,21 @@ describe("POST /api/policies", () => {
     } finally {
       pythStatus = 200;
     }
+  });
+});
+
+describe("POST /api/policies (PreStocks asset)", () => {
+  it("creates a DRAFT from the live PreStocks mark through the real route wiring", async () => {
+    wallet = await upsertWalletSeen(testDb.db, fakeWalletAddress());
+    const response = await POST(
+      new Request("http://localhost:3000/api/policies", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ assetId: prestocksAssetId, side: "BUY", triggerDirection: "BELOW", expressionType: "RELATIVE_PERCENT", expressionValue: "3", amount: "12", maxSlippageBps: 50, expiryHours: 24 }),
+      }),
+    );
+    const body = await response.json();
+    expect(response.status).toBe(201);
+    expect(body.data.policy).toMatchObject({ status: "DRAFT", compiledTriggerUsd: "970.00", reference: { provider: "PRESTOCKS", name: "PreStocks mark", priceUsd: "1000" } });
   });
 });

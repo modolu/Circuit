@@ -4,6 +4,7 @@ import {
   EXECUTION_STATUSES,
   referenceBasisSchema,
   jupiterVerificationSchema,
+  prestocksReferenceSchema,
   primaryReferenceSchema,
 } from "../domain/asset.ts";
 
@@ -14,14 +15,21 @@ import {
  * `verification`. Never infer a mint from a ticker, never resolve a Pyth feed by
  * ticker at runtime, and never copy values from design/ mockups.
  *
- * `pnpm db:seed` upserts an entry only when `verification.pythLiveCheck.status`
- * is "PASSED", i.e. the configured Pyth key could actually read the reference feed.
+ * Each entry names its reference provider (Task 10):
+ * - PYTH: public equities. `pnpm db:seed` upserts only when `verification.pythLiveCheck`
+ *   is "PASSED", i.e. the configured Pyth key could actually read the reference feed.
+ * - PRESTOCKS: private-company tokens. Identity, mint and prices come only from first-party
+ *   prestocks.com sources; `pnpm db:seed` upserts only when the recorded PreStocks and
+ *   Jupiter checks passed AND the live first-party catalog still lists the exact mint.
+ * The PreStocks API is discovery/reference data: its products are NOT execution assets
+ * unless curated here.
  */
 
 // Solana addresses are base58 (no 0, O, I, l) and 32–44 characters.
 const solanaAddress = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "must be a base58 Solana address");
 
-export const verifiedAssetSchema = z.object({
+const pythAssetSchema = z.object({
+  referenceProvider: z.literal("PYTH"),
   symbol: z.string().min(1),
   displayName: z.string().min(1),
   issuer: z.string().min(1),
@@ -51,10 +59,51 @@ export const verifiedAssetSchema = z.object({
   notes: z.array(z.string()),
 });
 
+const firstParty = z.url().refine((value) => /^https:\/\/(www\.)?prestocks\.com\//.test(value), "must be a first-party prestocks.com URL");
+
+const prestocksAssetSchema = z.object({
+  referenceProvider: z.literal("PRESTOCKS"),
+  symbol: z.string().min(1),
+  displayName: z.string().min(1),
+  issuer: z.literal("PreStocks"),
+  underlyingSymbol: z.string().min(1),
+  mintAddress: solanaAddress,
+  decimals: z.number().int().min(0).max(255),
+  tokenProgram: z.enum(["spl-token", "spl-token-2022"]),
+  reference: prestocksReferenceSchema,
+  execution: z.object({ status: z.enum(EXECUTION_STATUSES) }),
+  jupiter: jupiterVerificationSchema,
+  referenceBasis: referenceBasisSchema,
+  verification: z.object({
+    identitySources: z.array(firstParty).min(1),
+    mintSources: z.array(z.string().min(1)).min(1),
+    verifiedAt: z.iso.date(),
+    prestocksLiveCheck: z.object({
+      status: z.enum(["PASSED", "FAILED", "NOT_TESTED"]),
+      checkedAt: z.iso.datetime(),
+      detail: z.string().min(1),
+    }),
+  }),
+  tokenRestrictions: z.object({ transferFeeBps: z.number().int().min(0).max(10_000), detail: z.string().min(1) }),
+  notes: z.array(z.string()),
+});
+
+export const verifiedAssetSchema = z
+  .discriminatedUnion("referenceProvider", [pythAssetSchema, prestocksAssetSchema])
+  .superRefine((asset, ctx) => {
+    // A PreStocks asset's mint IS its first-party contract address: never a ticker lookup.
+    if (asset.referenceProvider === "PRESTOCKS" && asset.reference.contractAddress !== asset.mintAddress) {
+      ctx.addIssue({ code: "custom", path: ["reference", "contractAddress"], message: "must equal mintAddress" });
+    }
+  });
+
 export type VerifiedAssetConfig = z.infer<typeof verifiedAssetSchema>;
+export type PythAssetConfig = Extract<VerifiedAssetConfig, { referenceProvider: "PYTH" }>;
+export type PrestocksAssetConfig = Extract<VerifiedAssetConfig, { referenceProvider: "PRESTOCKS" }>;
 
 export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
   {
+    referenceProvider: "PYTH",
     symbol: "AAPLx",
     displayName: "Apple xStock",
     issuer: "xStocks by Backed",
@@ -160,7 +209,121 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
   },
 ];
 
-/** Entries whose reference feed was confirmed readable with the deployment's Pyth key. */
-export function seedableAssets(assets: readonly VerifiedAssetConfig[] = VERIFIED_ASSETS): VerifiedAssetConfig[] {
-  return assets.filter((asset) => asset.verification.pythLiveCheck.status === "PASSED");
+const ANTHROPIC_MINT = "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw";
+
+/*
+ * Primary PreStocks demo asset (Task 10), chosen on TECHNICAL integration quality only
+ * (not on company quality or any price view): of the six current products that passed
+ * every no-funds check on 2026-09-24 (first-party identity, valid Token-2022 mint, Jupiter
+ * exact-mint recognition, USDC route, BUY deposit rule, positive mark and token price, no
+ * lifecycle notice), it had the deepest Jupiter liquidity (~$877k vs next ~$391k).
+ */
+export const PRESTOCKS_ASSETS: readonly VerifiedAssetConfig[] = [
+  {
+    referenceProvider: "PRESTOCKS",
+    symbol: "ANTHROPIC",
+    displayName: "Anthropic PreStocks",
+    issuer: "PreStocks",
+    underlyingSymbol: "Anthropic",
+    mintAddress: ANTHROPIC_MINT,
+    decimals: 9,
+    tokenProgram: "spl-token-2022",
+    reference: {
+      provider: "prestocks",
+      role: "private_market_mark",
+      referenceType: "MARK_PRICE",
+      symbol: "ANTHROPIC",
+      contractAddress: ANTHROPIC_MINT,
+      apiUrl: "https://prestocks.com/api/prestocks",
+      productUrl: "https://www.prestocks.com/anthropic",
+      description: "PreStocks Mark Price for the ANTHROPIC token (first-party prestocks.com API)",
+    },
+    execution: { status: "PENDING_JUPITER_VERIFICATION" },
+    jupiter: {
+      checkedAt: "2026-09-24T05:40:16Z",
+      docsVersion: "Trigger V2 OpenAPI 2.0.0 (beta), developers.jup.ag docs as of 2026-09-24",
+      levels: {
+        IDENTITY_VERIFIED: {
+          result: "PASSED",
+          detail: "prestocks.com/api/prestocks lists symbol ANTHROPIC with contract_address Pren1FvF…Lkhw and external_url www.prestocks.com/anthropic (no lifecycle notice); Solana mainnet account is a Token-2022 mint with 9 decimals.",
+        },
+        JUPITER_TOKEN_RECOGNIZED: { result: "PASSED", detail: "GET /tokens/v2/search exact-mint match, decimals 9 (matches onchain)." },
+        SPOT_ROUTE_VERIFIED: {
+          result: "PASSED",
+          detail: "GET /swap/v2/order quote-only (no taker): 10.5 USDC → 9959377 raw ANTHROPIC via metis/Meteora DLMM. Swap routability is not Trigger proof.",
+        },
+        TOKEN_EXTENSIONS_COMPATIBLE: {
+          result: "RESTRICTED",
+          detail: "Token-2022 with transferFeeConfig (100 bps from epoch 1039) and transferHook (no program set): Trigger rejects these as DEPOSIT mints unless whitelisted, so SELL is restricted; BUY deposits USDC and is unaffected per docs.",
+        },
+        TRIGGER_API_ACCESS_VERIFIED: { result: "PASSED", detail: "Same deployment key as AAPLx: POST /trigger/v2/auth/challenge 200 (2026-09-24)." },
+        TRIGGER_DEPOSIT_CRAFT_VERIFIED: { result: "NOT_TESTED", detail: "Needs a wallet-signed JWT; no funded craft in Task 10." },
+        LIVE_TRIGGER_ORDER_VERIFIED: { result: "NOT_TESTED", detail: "No funded order has been placed." },
+      },
+      sides: {
+        BUY: {
+          result: "NOT_TESTED",
+          detail: "USDC → ANTHROPIC: deposit mint USDC (classic SPL, no extensions) is outside the documented restriction; route exists. Unproven until a live deposit craft and order succeed.",
+        },
+        SELL: {
+          result: "RESTRICTED",
+          detail: "ANTHROPIC → USDC: the deposit mint carries transferFeeConfig and transferHook, rejected unless Jupiter whitelists it. Live SELL stays disabled.",
+        },
+      },
+    },
+    referenceBasis: {
+      status: "RESOLVED",
+      policyReference: "PreStocks ANTHROPIC Mark Price (first-party prestocks.com API)",
+      executionMonitor: "Jupiter Trigger monitors the ANTHROPIC token's USD market price",
+      triggerMapping: "IDENTITY",
+      disclosure: "The ANTHROPIC token may trade at a premium or discount to the PreStocks mark.",
+      detail:
+        "Task 10 decision (2026-09-24). The compiled USD target (from the captured mark) is sent to Jupiter unchanged. Evidence: Jupiter Price V3 usdPrice for this mint tracks the PreStocks API tokenPrice (identical digits for several PreStocks tokens on 2026-09-24), and the mint's ScaledUiAmount multiplier is 1. The mark and the token market price are deliberately distinct.",
+    },
+    verification: {
+      identitySources: ["https://prestocks.com/api/prestocks", "https://www.prestocks.com/anthropic"],
+      mintSources: [
+        "https://prestocks.com/api/prestocks (contract_address for symbol ANTHROPIC)",
+        "Solana mainnet getParsedAccountInfo(Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw): spl-token-2022 mint, decimals 9",
+      ],
+      verifiedAt: "2026-09-24",
+      prestocksLiveCheck: {
+        status: "PASSED",
+        checkedAt: "2026-09-24T05:40:16Z",
+        detail: "pnpm test:prestocks-live: API 200, 8 valid products; ANTHROPIC exact mint present with positive markPrice and tokenPrice; product page has no lifecycle notice.",
+      },
+    },
+    tokenRestrictions: {
+      transferFeeBps: 100,
+      detail: "Token-2022 transfer fee: 100 bps (1.00%) since epoch 1039 (previously 50 bps). Token transfers, including delivery of filled output, may be reduced by this fee.",
+    },
+    notes: [
+      "PreStocks provide only economic exposure to private companies; they confer no ownership, voting, dividend or information rights and are not available to U.S. persons (prestocks.com disclaimer).",
+      "Issuer controls: permanent delegate, freeze authority and pausable config are set; default account state is initialized; ScaledUiAmount multiplier 1.",
+    ],
+  },
+];
+
+export const ALL_VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [...VERIFIED_ASSETS, ...PRESTOCKS_ASSETS];
+
+/**
+ * Entries whose own recorded gates passed. PYTH: the Pyth key read the feed. PRESTOCKS: the
+ * first-party check passed, Jupiter recognized the exact mint, a USDC route exists and the
+ * BUY deposit is not restricted. (PreStocks is re-checked against the live catalog at seed time.)
+ */
+export function seedableAssets(assets: readonly VerifiedAssetConfig[] = ALL_VERIFIED_ASSETS): VerifiedAssetConfig[] {
+  return assets.filter((asset) => seedBlocker(asset) === null);
+}
+
+export function seedBlocker(asset: VerifiedAssetConfig): string | null {
+  if (asset.referenceProvider === "PYTH") {
+    const check = asset.verification.pythLiveCheck;
+    return check.status === "PASSED" ? null : `Pyth live check is ${check.status} (${check.detail})`;
+  }
+  if (asset.verification.prestocksLiveCheck.status !== "PASSED") return `PreStocks check is ${asset.verification.prestocksLiveCheck.status}`;
+  const levels = asset.jupiter.levels;
+  if (levels.JUPITER_TOKEN_RECOGNIZED?.result !== "PASSED") return "Jupiter exact-mint recognition not passed";
+  if (levels.SPOT_ROUTE_VERIFIED?.result !== "PASSED") return "USDC route not verified";
+  if (asset.jupiter.sides.BUY.result === "RESTRICTED" || asset.jupiter.sides.BUY.result === "FAILED") return "BUY deposit restricted";
+  return null;
 }

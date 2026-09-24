@@ -19,7 +19,8 @@
     "db:migrate": "node --env-file-if-exists=.env.local --conditions=react-server src/db/migrate.ts",
     "db:seed": "node --env-file-if-exists=.env.local --conditions=react-server src/db/seed.ts",
     "test:live": "CIRCUIT_LIVE_TESTS=pyth node --env-file-if-exists=.env.local ./node_modules/vitest/vitest.mjs run",
-    "test:jupiter-live": "CIRCUIT_LIVE_TESTS=jupiter node --env-file-if-exists=.env.local ./node_modules/vitest/vitest.mjs run"
+    "test:jupiter-live": "CIRCUIT_LIVE_TESTS=jupiter node --env-file-if-exists=.env.local ./node_modules/vitest/vitest.mjs run",
+    "test:prestocks-live": "CIRCUIT_LIVE_TESTS=prestocks node --env-file-if-exists=.env.local ./node_modules/vitest/vitest.mjs run"
   },
   "dependencies": {
     "@neondatabase/serverless": "1.1.0",

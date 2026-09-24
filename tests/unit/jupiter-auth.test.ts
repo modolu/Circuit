@@ -189,8 +189,27 @@ describe("live BUY deposit gate", () => {
 
   it("fails closed on missing or malformed evidence without breaking the reference", () => {
     const parsed = assetMetadataSchema.parse({ ...base, jupiter: { bogus: true }, verification: { internal: "x" } });
-    expect(parsed.reference.feedId).toBe(922);
+    expect(parsed.reference).toMatchObject({ provider: "pyth_pro", feedId: 922 });
     expect(liveBuyDepositGate(parsed)).toMatchObject({ ok: false });
+  });
+
+  it("uses each provider's own reference check: PreStocks never needs Pyth", () => {
+    const prestocks = {
+      ...base,
+      reference: {
+        provider: "prestocks",
+        role: "private_market_mark",
+        referenceType: "MARK_PRICE",
+        symbol: "ANTHROPIC",
+        contractAddress: "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw",
+        apiUrl: "https://prestocks.com/api/prestocks",
+        productUrl: "https://www.prestocks.com/anthropic",
+        description: "x",
+      },
+      verification: { prestocksLiveCheck: { status: "PASSED" } },
+    } as unknown as AssetMetadata;
+    expect(liveBuyDepositGate(prestocks)).toEqual({ ok: true });
+    expect(liveBuyDepositGate({ ...prestocks, verification: { pythLiveCheck: { status: "PASSED" } } })).toMatchObject({ reason: "PRESTOCKS_REFERENCE_CHECK_REQUIRED" });
   });
 
   it("requires Pyth, BUY compatibility and a resolved reference basis", () => {

@@ -1,9 +1,8 @@
 import { requireAuthenticatedWallet } from "@/src/auth/current-wallet";
 import { getDb } from "@/src/db/client";
-import { getPythClient } from "@/src/integrations/pyth/client";
 import { logger } from "@/src/observability/logger";
 import { createPolicyDraft } from "@/src/services/create-policy";
-import { getAssetReference } from "@/src/services/get-reference";
+import { defaultReferenceClients, getAssetReference } from "@/src/services/get-reference";
 import { createPolicyRequestSchema } from "@/src/validation/policy";
 import { jsonError, jsonOk, newRequestId, parseJsonBody } from "../_lib/http";
 
@@ -14,11 +13,11 @@ export async function POST(request: Request) {
     const db = getDb();
     const wallet = await requireAuthenticatedWallet(db);
     const body = await parseJsonBody(request, createPolicyRequestSchema);
-    const pyth = getPythClient();
+    const clients = defaultReferenceClients();
     const policy = await createPolicyDraft(
       db,
       { wallet, request: body },
-      { loadReference: (database, assetId) => getAssetReference(database, assetId, { pyth }) },
+      { loadReference: (database, assetId) => getAssetReference(database, assetId, clients) },
     );
     logger.info("policy.draft_created", { requestId, policyId: policy.id, wallet: wallet.address, assetId: policy.asset.id });
     return jsonOk({ policy }, requestId, 201);

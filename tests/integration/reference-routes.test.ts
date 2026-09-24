@@ -50,7 +50,7 @@ describe("GET /api/assets", () => {
     const body = await (await assetsRoute()).json();
     expect(body.requestId).toMatch(/^req_/);
     const listed = body.data.assets.find((a: { id: string }) => a.id === asset.id);
-    expect(listed.reference).toEqual({ provider: "pyth_pro", symbol: "Equity.US.AAPL/USD", configured: true });
+    expect(listed.reference).toEqual({ provider: "PYTH", label: "Pyth AAPL/USD", symbol: "Equity.US.AAPL/USD", configured: true });
     expect(listed.execution.enabled).toBe(false);
     expect(JSON.stringify(body)).not.toMatch(/verification|internal note|metadata/);
   });

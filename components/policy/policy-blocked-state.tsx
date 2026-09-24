@@ -7,9 +7,11 @@ export interface ConfiguredAssetStatus {
   symbol: string;
   displayName: string;
   mintAddress: string;
-  referenceSymbol: string;
-  referenceFeedId: number;
-  liveReferenceAccess: "PASSED" | "NOT_ENTITLED";
+  /** "Pyth mapping" or "PreStocks mark mapping". */
+  referenceLabel: string;
+  /** e.g. "Equity.US.AAPL/USD · feed 922" or "ANTHROPIC · prestocks.com API". */
+  referenceDetail: string;
+  liveReferenceAccess: string;
   /** Jupiter Tokens V2 recognition plus a quote-only spot route. Not proof of Trigger execution. */
   jupiterRoutingVerified: boolean;
   executionVerified: boolean;
@@ -41,8 +43,8 @@ export function PolicyBlockedState({ configured }: { configured: ConfiguredAsset
           No reference-enabled stock is available yet.
         </h2>
         <p className="mt-2 max-w-[560px] text-[13px] leading-relaxed text-muted">
-          AAPLx has been verified on Solana, but this environment&apos;s Pyth key does not currently have US-equity
-          entitlement. Circuit will not compile or arm a policy without the required reference.
+          No curated asset currently has a live, usable reference in this environment (for example, AAPLx needs a
+          Pyth key with US-equity entitlement). Circuit will not compile or arm a policy without its reference.
         </p>
 
         {configured.map((asset) => (
@@ -53,11 +55,7 @@ export function PolicyBlockedState({ configured }: { configured: ConfiguredAsset
             </div>
             <ul>
               <Check label="Solana mint verified" detail={shortAddress(asset.mintAddress)} state="verified" />
-              <Check
-                label="Pyth mapping verified"
-                detail={`${asset.referenceSymbol} · feed ${asset.referenceFeedId}`}
-                state="verified"
-              />
+              <Check label={`${asset.referenceLabel} verified`} detail={asset.referenceDetail} state="verified" />
               <Check label="Live reference access" state={asset.liveReferenceAccess === "PASSED" ? "verified" : "pending"} />
               <Check
                 label="Jupiter token & routing verified"
@@ -76,15 +74,15 @@ export function PolicyBlockedState({ configured }: { configured: ConfiguredAsset
           <StatusChip tone="muted">UNAVAILABLE</StatusChip>
         </div>
         <div className="px-5 py-4">
-          <SectionLabel tone="accent">Pyth equity reference</SectionLabel>
+          <SectionLabel tone="accent">Reference</SectionLabel>
           <p className="mt-2 font-mono text-[28px] leading-none text-dim" aria-label="No reference">
             <span aria-hidden="true">—</span>
           </p>
           <p className="mt-2 text-xs text-muted">Waiting for live reference access.</p>
         </div>
         <div className="border-t border-line px-5 py-4 text-xs leading-relaxed text-muted">
-          Policies compile only from a verified asset with a live Pyth equity reference. Once access is confirmed, this
-          page becomes the policy form.
+          Policies compile only from a verified asset with a live reference (Pyth for public equities, the PreStocks
+          mark for private-company tokens). Once one is available, this page becomes the policy form.
         </div>
       </Card>
     </div>

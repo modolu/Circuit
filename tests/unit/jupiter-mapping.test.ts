@@ -174,7 +174,8 @@ describe("reference basis (Pyth AAPL → Jupiter AAPLx)", () => {
   });
 
   it("records the AAPLx decision: identity mapping, Pyth reference, Jupiter AAPLx monitor, premium/discount disclosure", () => {
-    const aaplx = VERIFIED_ASSETS.find((asset) => asset.symbol === "AAPLx")!;
+    const aaplx = VERIFIED_ASSETS.find((asset) => asset.symbol === "AAPLx");
+    if (aaplx?.referenceProvider !== "PYTH") throw new Error("AAPLx must be a Pyth asset");
     expect(aaplx.referenceBasis).toMatchObject({ status: "RESOLVED", triggerMapping: "IDENTITY" });
     expect(aaplx.referenceBasis.policyReference).toMatch(/Pyth Equity\.US\.AAPL\/USD/);
     expect(aaplx.referenceBasis.executionMonitor).toMatch(/Jupiter Trigger monitors AAPLx\/USD/);

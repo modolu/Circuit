@@ -49,7 +49,7 @@ describe("getAssetReference", () => {
     const result = await getAssetReference(db(), asset.id, { pyth: pyth.client });
 
     expect(pyth.requests).toEqual([{ feedIds: [922], channel: "fixed_rate@200ms" }]);
-    expect(result.reference).toMatchObject({ feedId: 922, symbol: "Equity.US.AAPL/USD", priceUsd: "227.35", freshness: "FRESH" });
+    expect(result.reference).toMatchObject({ provider: "PYTH", priceUsd: "227.35", freshness: "FRESH", timestampKind: "SOURCE", pyth: { feedId: 922, symbol: "Equity.US.AAPL/USD" } });
     expect(result.asset.execution).toEqual({ enabled: false, status: "PENDING_JUPITER_VERIFICATION" });
   });
 

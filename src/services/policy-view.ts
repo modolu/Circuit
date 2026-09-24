@@ -10,6 +10,7 @@ import { findPolicyForWallet, listPoliciesForWallet, listPolicyEvents } from "..
 import type { Execution, Policy, PolicyEvent } from "../db/schema.ts";
 import { fromAtomicUnits } from "../domain/money.ts";
 import { describePolicy, isSimulatedProvider, type PolicyStatus } from "../domain/policy.ts";
+import { referenceName, referenceSnapshotSchema, type ReferenceFreshness, type ReferenceSnapshot } from "../domain/reference.ts";
 
 /* Client-safe policy views. Every read is scoped to the owning wallet. */
 
@@ -22,13 +23,44 @@ export interface PolicyAssetSummary {
   decimals: number;
 }
 
-const snapshotSchema = z.object({
-  symbol: z.string(),
-  priceUsd: z.string(),
-  freshness: z.enum(["FRESH", "CARRIED", "STALE"]),
-  feedUpdateTimestamp: z.string(),
-  marketSession: z.string().nullable().optional(),
-});
+/** The captured reference, provider-labelled. Provider detail stays provider-specific. */
+export interface PolicyReferenceView {
+  provider: "PYTH" | "PRESTOCKS";
+  /** "Pyth AAPL reference" or "PreStocks mark". */
+  name: string;
+  /** Pyth feed symbol, or PreStocks product symbol. */
+  symbol: string;
+  priceUsd: string;
+  freshness: ReferenceFreshness;
+  timestampKind: "SOURCE" | "RECEIVED";
+  /** SOURCE: provider generation time. RECEIVED: when Circuit received the response. */
+  timestamp: string;
+  marketSession: string | null;
+  tokenPriceUsd: string | null;
+  premiumPercent: string | null;
+  productUrl: string | null;
+}
+
+export function toPolicyReferenceView(snapshot: ReferenceSnapshot, underlyingSymbol: string): PolicyReferenceView {
+  const base = {
+    provider: snapshot.provider,
+    name: referenceName(snapshot.provider, underlyingSymbol),
+    priceUsd: snapshot.priceUsd,
+    freshness: snapshot.freshness,
+    timestampKind: snapshot.timestampKind,
+    timestamp: snapshot.sourceTimestamp ?? snapshot.receivedTimestamp,
+  };
+  return snapshot.provider === "PYTH"
+    ? { ...base, symbol: snapshot.pyth.symbol, marketSession: snapshot.pyth.marketSession, tokenPriceUsd: null, premiumPercent: null, productUrl: null }
+    : {
+        ...base,
+        symbol: snapshot.prestocks.symbol,
+        marketSession: null,
+        tokenPriceUsd: snapshot.prestocks.tokenPriceUsd,
+        premiumPercent: snapshot.prestocks.premiumPercent,
+        productUrl: snapshot.prestocks.productUrl,
+      };
+}
 
 export interface PolicyView {
   id: string;
@@ -45,7 +77,7 @@ export interface PolicyView {
   maxSlippageBps: number;
   expiresAt: string;
   createdAt: string;
-  reference: z.infer<typeof snapshotSchema> | null;
+  reference: PolicyReferenceView | null;
   summary: string;
   provider: string;
   /** True when a simulated (mock) provider armed this policy. Its evidence is never onchain. */
@@ -125,7 +157,7 @@ export function toPolicyView(policy: Policy, asset: PolicyAssetSummary): PolicyV
   const buying = policy.side === "BUY";
   const decimals = buying ? USDC.decimals : asset.decimals;
   const display = fromAtomicUnits(policy.amountAtomic, decimals);
-  const snapshot = snapshotSchema.safeParse(policy.pythSnapshotJson);
+  const snapshot = referenceSnapshotSchema.safeParse(policy.referenceSnapshotJson);
   return {
     id: policy.id,
     status: policy.status,
@@ -141,7 +173,7 @@ export function toPolicyView(policy: Policy, asset: PolicyAssetSummary): PolicyV
     maxSlippageBps: policy.maxSlippageBps,
     expiresAt: policy.expiresAt.toISOString(),
     createdAt: policy.createdAt.toISOString(),
-    reference: snapshot.success ? snapshot.data : null,
+    reference: snapshot.success ? toPolicyReferenceView(snapshot.data, asset.underlyingSymbol) : null,
     provider: policy.provider,
     simulated: isSimulatedProvider(policy.provider),
     providerOrderId: policy.providerOrderId,
@@ -156,12 +188,13 @@ export function toPolicyView(policy: Policy, asset: PolicyAssetSummary): PolicyV
       direction: policy.triggerDirection,
       assetSymbol: asset.symbol,
       underlyingSymbol: asset.underlyingSymbol,
+      referenceName: referenceName(policy.referenceProvider, asset.underlyingSymbol),
       quoteSymbol: USDC.symbol,
       amountDisplay: display,
       compiledTriggerUsd: policy.compiledTriggerUsd,
       expressionType: policy.sourceExpressionType,
       expressionValue: policy.sourceExpressionValue,
-      referenceUsd: policy.pythReferenceUsd,
+      referenceUsd: policy.referenceUsd,
     }),
   };
 }

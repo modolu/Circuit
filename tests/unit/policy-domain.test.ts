@@ -78,6 +78,26 @@ describe("compileTriggerUsd", () => {
 });
 
 describe("describePolicy", () => {
+  it("names the PreStocks mark for PreStocks policies, never Pyth", () => {
+    const sentence = describePolicy({
+      side: "BUY",
+      direction: "BELOW",
+      assetSymbol: "ANTHROPIC",
+      underlyingSymbol: "Anthropic",
+      referenceName: "PreStocks mark",
+      quoteSymbol: "USDC",
+      amountDisplay: "25",
+      compiledTriggerUsd: "970.00",
+      expressionType: "RELATIVE_PERCENT",
+      expressionValue: "3",
+      referenceUsd: "1000.00",
+    });
+    expect(sentence).toBe(
+      "Buy up to 25 USDC of ANTHROPIC if the USD price falls to or below $970.00 before expiry. Compiled from 3% below the captured PreStocks mark of $1,000.00.",
+    );
+    expect(sentence).not.toMatch(/Pyth/);
+  });
+
   it("writes the absolute BUY sentence from structured fields", () => {
     expect(
       describePolicy({
@@ -85,6 +105,7 @@ describe("describePolicy", () => {
         direction: "BELOW",
         assetSymbol: "AAPLx",
         underlyingSymbol: "AAPL",
+        referenceName: "Pyth AAPL reference",
         quoteSymbol: "USDC",
         amountDisplay: "100",
         compiledTriggerUsd: "181.00",
@@ -102,6 +123,7 @@ describe("describePolicy", () => {
         direction: "ABOVE",
         assetSymbol: "AAPLx",
         underlyingSymbol: "AAPL",
+        referenceName: "Pyth AAPL reference",
         quoteSymbol: "USDC",
         amountDisplay: "0.25",
         compiledTriggerUsd: "206.00",

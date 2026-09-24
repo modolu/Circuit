@@ -16,7 +16,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { label: "Markets" },
+  { label: "Markets", href: "/markets" },
   { label: "New policy", href: "/policies/new" },
   { label: "Policies", href: "/dashboard", activePrefixes: ["/policies/"] },
   { label: "Activity" },

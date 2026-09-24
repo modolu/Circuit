@@ -69,8 +69,9 @@ describe("createPolicyDraft", () => {
     expect(typeof row!.amountAtomic).toBe("bigint");
     expect(row!.compiledTriggerUsd).toBe("181.00");
     expect(row!.inputMint).toBe(USDC.mintAddress);
-    expect(row!.pythReferenceUsd).toBe("227.35");
-    expect((row!.pythSnapshotJson as { freshness: string }).freshness).toBe("FRESH");
+    expect(row!.referenceProvider).toBe("PYTH");
+    expect(row!.referenceUsd).toBe("227.35");
+    expect(row!.referenceSnapshotJson).toMatchObject({ provider: "PYTH", freshness: "FRESH", timestampKind: "SOURCE" });
     expect(row!.expiresAt.toISOString()).toBe(new Date(NOW.getTime() + 24 * 3600 * 1000).toISOString());
 
     const events = await db().select().from(policyEvents).where(eq(policyEvents.policyId, view.id)).orderBy(policyEvents.sequenceNumber);

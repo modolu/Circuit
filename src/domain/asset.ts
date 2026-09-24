@@ -10,7 +10,16 @@ import { PYTH_CHANNELS } from "../config/reference.ts";
 export const EXECUTION_STATUSES = ["PENDING_JUPITER_VERIFICATION", "VERIFIED"] as const;
 export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number];
 
-/** Circuit's primary reference: the independent underlying-equity feed, never the token's own market. */
+/**
+ * Reference providers (Task 10). The curated asset config decides which one an asset
+ * uses; a request can never choose, and there is no fallback between providers.
+ * - PYTH: the independent underlying public-equity feed (e.g. Equity.US.AAPL/USD).
+ * - PRESTOCKS: PreStocks' first-party mark price for a private-company token.
+ */
+export const REFERENCE_PROVIDERS = ["PYTH", "PRESTOCKS"] as const;
+export type ReferenceProvider = (typeof REFERENCE_PROVIDERS)[number];
+
+/** Circuit's Pyth reference: the independent underlying-equity feed, never the token's own market. */
 export const primaryReferenceSchema = z.object({
   provider: z.literal("pyth_pro"),
   role: z.literal("underlying_equity"),
@@ -20,6 +29,28 @@ export const primaryReferenceSchema = z.object({
   assetType: z.literal("equity"),
   description: z.string().min(1),
 });
+
+/**
+ * PreStocks mark reference. Identity and prices come only from first-party prestocks.com
+ * sources; the contract address is the exact Solana mint (never derived from a ticker).
+ */
+export const prestocksReferenceSchema = z.object({
+  provider: z.literal("prestocks"),
+  role: z.literal("private_market_mark"),
+  referenceType: z.literal("MARK_PRICE"),
+  symbol: z.string().regex(/^[A-Z0-9]{1,20}$/),
+  contractAddress: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+  apiUrl: z.url().refine((value) => value.startsWith("https://prestocks.com/"), "must be the first-party PreStocks API"),
+  productUrl: z.url().refine((value) => /^https:\/\/(www\.)?prestocks\.com\//.test(value), "must be a prestocks.com product URL"),
+  description: z.string().min(1),
+});
+
+export const assetReferenceConfigSchema = z.discriminatedUnion("provider", [primaryReferenceSchema, prestocksReferenceSchema]);
+export type AssetReferenceConfig = z.infer<typeof assetReferenceConfigSchema>;
+
+export function referenceProviderOf(config: AssetReferenceConfig): ReferenceProvider {
+  return config.provider === "pyth_pro" ? "PYTH" : "PRESTOCKS";
+}
 
 /** Optional feeds for comparison only (e.g. the tokenized stock's own market). Never used as the reference. */
 export const comparisonFeedSchema = z.object({
@@ -90,7 +121,7 @@ export const referenceBasisSchema = z.object({
 export type ReferenceBasis = z.infer<typeof referenceBasisSchema>;
 
 export const assetMetadataSchema = z.object({
-  reference: primaryReferenceSchema,
+  reference: assetReferenceConfigSchema,
   comparisonFeeds: z.array(comparisonFeedSchema).default([]),
   execution: z.object({ status: z.enum(EXECUTION_STATUSES) }),
   // Live-execution evidence. Missing or malformed evidence reads as "not verified" (the
@@ -98,19 +129,29 @@ export const assetMetadataSchema = z.object({
   jupiter: jupiterVerificationSchema.optional().catch(undefined),
   referenceBasis: referenceBasisSchema.optional().catch(undefined),
   verification: z
-    .object({ pythLiveCheck: z.object({ status: z.string() }).optional().catch(undefined) })
+    .object({
+      pythLiveCheck: z.object({ status: z.string() }).optional().catch(undefined),
+      prestocksLiveCheck: z.object({ status: z.string() }).optional().catch(undefined),
+    })
     .optional()
     .catch(undefined),
 });
 
 export type LiveBuyGateFailure =
   | "PYTH_LIVE_CHECK_REQUIRED"
+  | "PRESTOCKS_REFERENCE_CHECK_REQUIRED"
   | "BUY_DEPOSIT_NOT_COMPATIBLE"
   | "REFERENCE_BASIS_UNRESOLVED";
 
 /** Whether an asset may have a live Jupiter BUY deposit prepared or armed. Missing evidence means no. */
 export function liveBuyDepositGate(metadata: AssetMetadata): { ok: true } | { ok: false; reason: LiveBuyGateFailure } {
-  if (metadata.verification?.pythLiveCheck?.status !== "PASSED") return { ok: false, reason: "PYTH_LIVE_CHECK_REQUIRED" };
+  // Each provider's own live reference check; a PreStocks asset never needs Pyth entitlement.
+  if (metadata.reference.provider === "pyth_pro" && metadata.verification?.pythLiveCheck?.status !== "PASSED") {
+    return { ok: false, reason: "PYTH_LIVE_CHECK_REQUIRED" };
+  }
+  if (metadata.reference.provider === "prestocks" && metadata.verification?.prestocksLiveCheck?.status !== "PASSED") {
+    return { ok: false, reason: "PRESTOCKS_REFERENCE_CHECK_REQUIRED" };
+  }
   if (!metadata.jupiter || metadata.jupiter.sides.BUY.result === "RESTRICTED" || metadata.jupiter.sides.BUY.result === "FAILED") {
     return { ok: false, reason: "BUY_DEPOSIT_NOT_COMPATIBLE" };
   }
@@ -132,6 +173,7 @@ export interface PublicAsset {
   underlyingSymbol: string;
   mintAddress: string;
   decimals: number;
-  reference: { provider: "pyth_pro"; symbol: string; configured: boolean };
+  /** The curated reference provider. `label` is presentation copy ("Pyth AAPL/USD", "PreStocks mark"). */
+  reference: { provider: ReferenceProvider; symbol: string; label: string; configured: boolean };
   execution: { enabled: boolean; status: ExecutionStatus };
 }

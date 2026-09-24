@@ -8,7 +8,7 @@ import { formatUtc } from "@/components/asset/format";
 import { Button } from "@/components/ui/button";
 import { StatusChip, type ChipTone } from "@/components/ui/status-chip";
 import { shortAddress } from "@/components/wallet/short-address";
-import { formatUsd } from "@/src/domain/money";
+import { formatUsd, formatUsdCents } from "@/src/domain/money";
 import type { PolicyStatus } from "@/src/domain/policy";
 import { SolscanLink } from "./solscan-link";
 import { signPreparedTransaction, type SignTransaction } from "./wallet-transaction";
@@ -19,14 +19,18 @@ import { signPreparedTransaction, type SignTransaction } from "./wallet-transact
  * "Confirm withdrawal". Nothing signs, submits or re-sends on render, refresh or reconcile.
  */
 
-export const DEPOSIT_AUTHORIZATION_TEXT =
-  "Signing this transaction authorizes the displayed USDC amount to be deposited into your Jupiter Trigger vault. If the subsequent order creation succeeds, Jupiter will monitor AAPLx/USD and execute under the policy shown above.";
+export function depositAuthorizationText(assetSymbol: string): string {
+  return `Signing this transaction authorizes the displayed USDC amount to be deposited into your Jupiter Trigger vault. If the subsequent order creation succeeds, Jupiter will monitor ${assetSymbol}/USD and execute under the policy shown above.`;
+}
 export const REAL_TRANSACTION_WARNING = "This is a real Solana transaction and can move funds.";
 export const WITHDRAWAL_TEXT =
   "Jupiter has stopped this order from filling. Sign this withdrawal transaction to return the unfilled funds from your Jupiter vault to your wallet.";
 
 export interface LiveReview {
   assetSymbol: string;
+  referenceProvider: "PYTH" | "PRESTOCKS";
+  /** Token-level caveat from the curated config (e.g. a Token-2022 transfer fee). */
+  tokenNote?: string | null;
   amountDisplay: string;
   amountSymbol: string;
   referenceSymbol: string | null;
@@ -117,10 +121,21 @@ export function LiveOrderReview({ review, vaultAddress }: { review: LiveReview; 
         <ReviewRow term="Input">
           {review.amountDisplay} {review.amountSymbol}
         </ReviewRow>
-        <ReviewRow term="Trigger reference" sub="Pyth · independent underlying reference">
-          {review.referenceSymbol ?? "Pyth AAPL/USD"}
-        </ReviewRow>
-        <ReviewRow term="Captured Pyth reference">{review.referenceUsd ? formatUsd(review.referenceUsd) : "Not recorded"}</ReviewRow>
+        {review.referenceProvider === "PRESTOCKS" ? (
+          <>
+            <ReviewRow term="Trigger reference" sub="PreStocks · first-party mark price">
+              PreStocks mark{review.referenceSymbol ? ` (${review.referenceSymbol})` : ""}
+            </ReviewRow>
+            <ReviewRow term="Captured PreStocks mark">{review.referenceUsd ? formatUsdCents(review.referenceUsd) : "Not recorded"}</ReviewRow>
+          </>
+        ) : (
+          <>
+            <ReviewRow term="Trigger reference" sub="Pyth · independent underlying reference">
+              {review.referenceSymbol ?? "Pyth equity reference"}
+            </ReviewRow>
+            <ReviewRow term="Captured Pyth reference">{review.referenceUsd ? formatUsd(review.referenceUsd) : "Not recorded"}</ReviewRow>
+          </>
+        )}
         <ReviewRow term="Compiled target" sub="Circuit · sent to Jupiter unchanged">
           <span className="text-accent">{formatUsd(review.compiledTriggerUsd)}</span>
         </ReviewRow>
@@ -135,9 +150,12 @@ export function LiveOrderReview({ review, vaultAddress }: { review: LiveReview; 
       <p className="mt-3 rounded-md border border-warning/40 bg-warning/8 p-3 text-xs leading-relaxed">
         <strong className="font-semibold">Note:</strong>{" "}
         {review.disclosure ?? `${review.assetSymbol} is a secondary-market token and may trade at a premium or discount to the underlying stock.`}{" "}
-        Pyth informs this policy; Jupiter&apos;s trigger engine monitors {review.assetSymbol}/USD, not Pyth. Deposit and settlement evidence
-        is recorded from Solana.
+        {review.referenceProvider === "PRESTOCKS"
+          ? `PreStocks provides the reference mark; Jupiter's trigger engine monitors the actual ${review.assetSymbol} token's USD market price, not the mark.`
+          : `Pyth informs this policy; Jupiter's trigger engine monitors ${review.assetSymbol}/USD, not Pyth.`}{" "}
+        Deposit and settlement evidence is recorded from Solana.
       </p>
+      {review.tokenNote && <p className="mt-2 text-xs leading-relaxed text-muted">{review.tokenNote}</p>}
     </div>
   );
 }
@@ -333,7 +351,7 @@ export function LiveOrderPanel(props: LiveOrderPanelProps) {
         ) : (
           <>
             <LiveOrderReview review={review} vaultAddress={prepared.vaultAddress} />
-            <p className="mt-4 text-[13px] leading-relaxed">{DEPOSIT_AUTHORIZATION_TEXT}</p>
+            <p className="mt-4 text-[13px] leading-relaxed">{depositAuthorizationText(review.assetSymbol)}</p>
             <p className="mt-2 text-[13px] font-semibold text-warning">{REAL_TRANSACTION_WARNING}</p>
             {walletGate}
             <Button

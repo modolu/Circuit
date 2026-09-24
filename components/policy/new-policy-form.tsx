@@ -25,7 +25,9 @@ import {
   type SlippageBps,
   type SourceExpressionType,
 } from "@/src/domain/policy";
-import type { EquityReference } from "@/src/integrations/pyth/mapper";
+import { PrestocksMarkSummary } from "@/components/prestocks/mark-summary";
+import { formatUsdCents } from "@/src/domain/money";
+import type { ReferenceFreshness, ReferenceSnapshot } from "@/src/domain/reference";
 
 export interface FormAsset {
   id: string;
@@ -35,6 +37,9 @@ export interface FormAsset {
   mintAddress: string;
   decimals: number;
   referenceSymbol: string;
+  referenceProvider: "PYTH" | "PRESTOCKS";
+  /** "Pyth AAPL reference" or "PreStocks mark". */
+  referenceName: string;
 }
 
 type PolicyTypeKey = (typeof POLICY_TYPES)[number]["key"];
@@ -42,10 +47,11 @@ type PolicyTypeKey = (typeof POLICY_TYPES)[number]["key"];
 const EXPIRY_LABELS: Record<ExpiryHours, string> = { 24: "24h", 72: "3d", 168: "7d" };
 const EXPIRY_LONG: Record<ExpiryHours, string> = { 24: "24 hours", 72: "3 days", 168: "7 days" };
 
-const FRESHNESS_TONE: Record<EquityReference["freshness"], ChipTone> = {
+const FRESHNESS_TONE: Record<ReferenceFreshness, ChipTone> = {
   FRESH: "success",
   CARRIED: "warning",
   STALE: "danger",
+  CURRENT_RESPONSE: "info",
 };
 
 function errorMessage(error: unknown): string {
@@ -120,8 +126,9 @@ function ReviewRow({ label, children, sub }: { label: string; children: React.Re
 
 /**
  * Structured policy form with a live review. The preview uses the same pure
- * domain compiler as the server; the server recompiles from a fresh Pyth
- * reference when the draft is created and is always authoritative.
+ * domain compiler as the server; the server recompiles from a fresh reference
+ * (from the asset's own provider: Pyth or PreStocks) when the draft is created and
+ * is always authoritative.
  */
 export function NewPolicyForm({
   assets,
@@ -132,7 +139,7 @@ export function NewPolicyForm({
 }: {
   assets: FormAsset[];
   asset: FormAsset;
-  reference: EquityReference | null;
+  reference: ReferenceSnapshot | null;
   referenceError: string | null;
   quote: { symbol: string; decimals: number };
 }) {
@@ -152,7 +159,9 @@ export function NewPolicyForm({
   const buying = policyType.side === "BUY";
   const inputUnit = buying ? quote.symbol : asset.symbol;
   const inputDecimals = buying ? quote.decimals : asset.decimals;
-  const relativeAllowed = reference?.freshness === "FRESH";
+  // Pyth: only a FRESH reference. PreStocks: a successful current API response with a valid mark.
+  const relativeAllowed = reference?.freshness === "FRESH" || reference?.freshness === "CURRENT_RESPONSE";
+  const prestocks = asset.referenceProvider === "PRESTOCKS";
   const effectiveMode: SourceExpressionType = mode === "RELATIVE_PERCENT" && !relativeAllowed ? "ABSOLUTE_PRICE" : mode;
   const expressionValue = effectiveMode === "ABSOLUTE_PRICE" ? triggerPrice : percent;
 
@@ -188,6 +197,7 @@ export function NewPolicyForm({
             direction: policyType.direction,
             assetSymbol: asset.symbol,
             underlyingSymbol: asset.underlyingSymbol,
+            referenceName: asset.referenceName,
             quoteSymbol: quote.symbol,
             amountDisplay: amount.trim(),
             compiledTriggerUsd: trigger,
@@ -259,7 +269,7 @@ export function NewPolicyForm({
                 </option>
               ))}
             </select>
-            <span className="font-mono text-xs text-muted">{reference ? `ref ${formatUsd(reference.priceUsd)}` : "no reference"}</span>
+            <span className="font-mono text-xs text-muted">{reference ? `${prestocks ? "mark" : "ref"} ${formatUsdCents(reference.priceUsd)}` : "no reference"}</span>
           </div>
         </Field>
 
@@ -290,12 +300,14 @@ export function NewPolicyForm({
             describedBy={!relativeAllowed ? `${ids}-mode-note` : undefined}
             options={[
               { value: "ABSOLUTE_PRICE", label: "Fixed USD price" },
-              { value: "RELATIVE_PERCENT", label: "% from current reference", disabled: !relativeAllowed },
+              { value: "RELATIVE_PERCENT", label: prestocks ? "% from PreStocks mark" : "% from current reference", disabled: !relativeAllowed },
             ]}
           />
           {!relativeAllowed && (
             <p id={`${ids}-mode-note`} className="text-xs text-muted">
-              % triggers need a FRESH Pyth reference{reference ? ` (current: ${reference.freshness})` : ""}.
+              {prestocks
+                ? "% triggers need a current PreStocks mark."
+                : `% triggers need a FRESH Pyth reference${reference ? ` (current: ${reference.freshness})` : ""}.`}
             </p>
           )}
           {effectiveMode === "ABSOLUTE_PRICE" ? (
@@ -306,7 +318,7 @@ export function NewPolicyForm({
               label="Trigger percentage"
               value={percent}
               onChange={setPercent}
-              unit={`% ${policyType.direction === "BELOW" ? "below" : "above"} ${reference ? formatUsd(reference.priceUsd) : "reference"}`}
+              unit={`% ${policyType.direction === "BELOW" ? "below" : "above"} ${prestocks ? "mark " : ""}${reference ? formatUsdCents(reference.priceUsd) : "reference"}`}
             />
           )}
           {triggerHint && (
@@ -342,18 +354,33 @@ export function NewPolicyForm({
 
         <div className="border-b border-line px-5 py-4">
           <div className="flex items-center justify-between gap-3">
-            <SectionLabel tone="accent">Pyth equity reference</SectionLabel>
+            <SectionLabel tone="accent">{prestocks ? "PreStocks mark" : "Pyth equity reference"}</SectionLabel>
             <RefreshReferenceButton />
           </div>
-          {reference ? (
+          {reference?.provider === "PRESTOCKS" ? (
+            <div data-testid="prestocks-reference">
+              <p className="mt-2 font-mono text-[28px] leading-none">{formatUsdCents(reference.priceUsd)}</p>
+              <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted">
+                <StatusChip tone={FRESHNESS_TONE[reference.freshness]}>CURRENT RESPONSE</StatusChip>
+                <span>received {reference.receivedTimestamp.replace("T", " ").slice(11, 19)} UTC</span>
+              </p>
+              <div className="mt-3">
+                <PrestocksMarkSummary
+                  markPriceUsd={reference.prestocks.markPriceUsd}
+                  tokenPriceUsd={reference.prestocks.tokenPriceUsd}
+                  premiumPercent={reference.prestocks.premiumPercent}
+                />
+              </div>
+            </div>
+          ) : reference?.provider === "PYTH" ? (
             <>
               <p className="mt-2 font-mono text-[28px] leading-none">{formatUsd(reference.priceUsd)}</p>
               <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted">
                 <StatusChip tone={FRESHNESS_TONE[reference.freshness]}>{reference.freshness}</StatusChip>
-                <span>{formatAge(reference.ageMs)}</span>
-                <span>{formatSession(reference.marketSession)}</span>
+                <span>{formatAge(reference.pyth.ageMs)}</span>
+                <span>{formatSession(reference.pyth.marketSession)}</span>
               </p>
-              <p className="mt-1.5 font-mono text-[11px] text-muted">{reference.symbol}</p>
+              <p className="mt-1.5 font-mono text-[11px] text-muted">{reference.pyth.symbol}</p>
             </>
           ) : (
             <>
@@ -366,6 +393,9 @@ export function NewPolicyForm({
         </div>
 
         <div className="px-5 py-1">
+          <ReviewRow label="Reference" sub={prestocks ? "PreStocks · captured when the draft is created" : "Pyth · captured when the draft is created"}>
+            {prestocks ? "PreStocks mark" : asset.referenceSymbol}
+          </ReviewRow>
           <ReviewRow label="Your trigger" sub={preview.distance ? `${preview.distance.startsWith("-") ? "" : "+"}${preview.distance}% vs reference` : undefined}>
             <span className="text-base text-accent">
               {preview.trigger ? `${policyType.direction === "BELOW" ? "≤" : "≥"} ${formatUsd(preview.trigger)}` : "—"}
@@ -380,8 +410,8 @@ export function NewPolicyForm({
           <ReviewRow label="Expires" sub="UTC time fixed when the draft is created">
             {EXPIRY_LONG[expiry]} after creation
           </ReviewRow>
-          <ReviewRow label="Execution rail" sub="Verification pending">
-            Jupiter Trigger
+          <ReviewRow label="Execution" sub="Jupiter Trigger monitors the token's own USD price">
+            Jupiter {asset.symbol}/USD
           </ReviewRow>
         </div>
 
@@ -391,13 +421,14 @@ export function NewPolicyForm({
 
         <div className="mx-5 mb-4 grid grid-cols-3 gap-2 text-[11px] leading-snug text-muted">
           <div className="rounded-md border border-line p-2.5">
-            <b className="mb-0.5 block text-xs font-medium text-text">Pyth</b>Reference and context
+            <b className="mb-0.5 block text-xs font-medium text-text">{prestocks ? "PreStocks" : "Pyth"}</b>
+            {prestocks ? "Mark reference" : "Reference and context"}
           </div>
           <div className="rounded-md border border-line p-2.5">
             <b className="mb-0.5 block text-xs font-medium text-text">Circuit</b>Deterministic compiler
           </div>
           <div className="rounded-md border border-line p-2.5">
-            <b className="mb-0.5 block text-xs font-medium text-text">Jupiter</b>Executes after arming (next)
+            <b className="mb-0.5 block text-xs font-medium text-text">Jupiter</b>Monitors and executes after arming
           </div>
         </div>
 
@@ -412,7 +443,7 @@ export function NewPolicyForm({
           )}
           <p className="text-center text-xs text-muted">
             {referenceBlocksDrafts
-              ? "A usable Pyth reference is required before a draft can be created."
+              ? `A usable ${asset.referenceName} is required before a draft can be created.`
               : "Creates a DRAFT only. Nothing is signed and no order is placed. Circuit recompiles from a fresh reference when you create it."}
           </p>
         </div>

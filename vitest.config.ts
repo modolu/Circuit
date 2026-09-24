@@ -1,10 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-/** Live provider checks are opt-in only: `pnpm test:live` (Pyth), `pnpm test:jupiter-live`, or "1" for all. */
+/** Live provider checks are opt-in only: `pnpm test:live` (Pyth), `pnpm test:jupiter-live`, `pnpm test:prestocks-live`, or "1" for all. */
 function testInclude(live: string | undefined): string[] {
   if (live === "pyth") return ["tests/live/pyth.live.test.ts"];
   if (live === "jupiter") return ["tests/live/jupiter.live.test.ts"];
+  if (live === "prestocks") return ["tests/live/prestocks.live.test.ts"];
   if (live === "1") return ["tests/live/**/*.test.ts"];
   return ["tests/unit/**/*.test.{ts,tsx}", "tests/integration/**/*.test.ts"];
 }

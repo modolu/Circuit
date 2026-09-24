@@ -45,7 +45,7 @@ Precedence when they conflict: **ARCHITECTURE > PRODUCT BRIEF > CLAUDE.md**, exc
 | Money | `bigint` for atomic token amounts, `decimal.js` 10.6.0 (local `Dec` clone in `src/domain/money.ts`, precision 64) for USD values. Never `number` for money. |
 | Wallet | `@solana/wallet-adapter-base` 0.9.28, `@solana/wallet-adapter-react` 0.15.40, `@solana/wallet-adapter-react-ui` 0.9.40, with Wallet Standard discovery (no explicit adapters: `WALLET_STANDARD_ONLY = []` in `components/wallet/solana-provider.tsx`). **Do not add `@solana/wallet-adapter-wallets`.** |
 | Solana client | `@solana/web3.js` 1.99.0, for addresses, signatures, and transactions only. Ed25519 login verification: `tweetnacl` 1.0.3 (server-side). Jupiter signature encoding (base64 → base58): `bs58` 6.0.0 (server-side). |
-| Reference data | Pyth Pro REST, server-side only, on demand (no Circuit-owned WebSocket) |
+| Reference data | Pyth Pro REST (public equities) and the PreStocks first-party API (private-company tokens), server-side only, on demand (no Circuit-owned WebSocket) |
 | Execution | Jupiter Trigger V2 REST, server-side only |
 | Tests | Vitest + Testing Library (unit/service/component), Playwright (e2e critical path) |
 | Hosting | Vercel (Hobby tier assumptions, see §12) |
@@ -65,7 +65,7 @@ This mirrors `CIRCUIT_ARCHITECTURE.md` §6 exactly. **Do not add a new top-level
 ├── package.json  pnpm-lock.yaml  next.config.ts  tsconfig.json  drizzle.config.ts  .env.example
 ├── app/                         # Next.js App Router: pages + route handlers only
 │   ├── layout.tsx  page.tsx
-│   ├── dashboard/page.tsx
+│   ├── dashboard/page.tsx  markets/page.tsx
 │   ├── policies/new/page.tsx
 │   ├── policies/[policyId]/page.tsx
 │   └── api/
@@ -81,17 +81,18 @@ This mirrors `CIRCUIT_ARCHITECTURE.md` §6 exactly. **Do not add a new top-level
 │       ├── policies/[policyId]/jupiter/{arm,cancel,confirm-cancel}/route.ts   # verify signed tx → Jupiter
 │       └── cron/reconcile/route.ts
 ├── components/                  # presentation + browser interaction; no secrets
-│   ├── wallet/  jupiter/  policy/  asset/  ui/
+│   ├── wallet/  jupiter/  prestocks/  policy/  asset/  ui/
 ├── src/
-│   ├── domain/                  # pure: policy.ts money.ts asset.ts errors.ts
+│   ├── domain/                  # pure: policy.ts money.ts asset.ts reference.ts errors.ts
 │   ├── services/                # use cases: create/compile/arm/cancel/reconcile-policy.ts, get-reference.ts, jupiter/{auth,vault,prepare-deposit,live-gates,arm-live,live-orders,reconcile-live,cancel-live,errors}.ts
 │   ├── integrations/
 │   │   ├── pyth/                # client.ts mapper.ts types.ts
+│   │   ├── prestocks/           # client.ts mapper.ts types.ts (first-party catalog)
 │   │   └── jupiter/             # client.ts trigger.ts schemas.ts types.ts token-compat.ts signed-transaction.ts (+ mock adapter, see §11)
 │   ├── db/                      # client.ts schema.ts repositories/ migrations/
 │   ├── auth/                    # wallet-message.ts verify-wallet.ts session.ts jupiter-session.ts
 │   ├── validation/              # policy.ts api.ts (Zod schemas)
-│   ├── config/                  # env.ts assets.ts
+│   ├── config/                  # env.ts assets.ts prestocks.ts
 │   └── observability/           # logger.ts
 └── tests/
     ├── unit/  integration/  fixtures/  e2e/
@@ -358,7 +359,16 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
 - **Provider state** (`policies.provider_state`): pending → ARMING; open/executing/pending_withdraw → ARMED (the UI shows EXECUTING / cancellation pending); filled → EXECUTED; cancelled → CANCELLED; expired → EXPIRED; failed → FAILED. Partial fills stay ARMED + EXECUTING with provider-reported progress only. Terminal states never move.
 - **Evidence:** ONCHAIN execution only with Jupiter's `inputUsed`, `outputAmount` and a genuine fill signature; `transaction_signature` = latest successful fill (never the deposit); `fill_json.fills` keeps every fill. Solscan links only for real 64-byte signatures.
 - **Cancellation:** "Cancel & withdraw" → history check (a fill wins) → `POST /orders/price/cancel/{id}` (fills stop; unsigned withdrawal persisted in `jupiter_cancel_preparations`) → explicit "Confirm withdrawal" → verified → `confirm-cancel` → CANCELLED. Timeouts/401 keep it retryable with the same signed withdrawal; a 400 requires re-initiating. Expired orders use the same flow but stay EXPIRED (`FUNDS_WITHDRAWN`). Never EXECUTED → CANCELLED.
-- **Pyth entitlement blocker:** AAPLx `pythLiveCheck` stays `NOT_ENTITLED` until `pnpm test:live` passes with an equity-entitled key, so production cannot seed AAPLx, create AAPLx policies, or arm live. Do not weaken this gate for testing; tests use fixture assets.
+- **Pyth entitlement blocker:** AAPLx `pythLiveCheck` stays `NOT_ENTITLED` until `pnpm test:live` passes with an equity-entitled key, so production cannot seed AAPLx, create AAPLx policies, or arm live. Do not weaken this gate for testing; tests use fixture assets. This blocker does not apply to PreStocks assets.
+
+**PreStocks (Task 10; Arch §10, §10.1, §27). The FINAL feature expansion: after it, feature freeze.**
+- **Endpoint:** `GET https://prestocks.com/api/prestocks` (first-party, public, no key; never invent a `PRESTOCKS_API_KEY`). Fields: name, symbol, description, image, external_url, contract_address, markPrice, markValuation, tokenPrice, impliedValuation, supply. No timestamps. Items are validated one by one; exact JSON digits preserved.
+- **Semantics:** "PreStocks mark" (Mark Price) = benchmark/reference; "Token market price" (Token Price) = onchain token price. Premium/discount to mark = (token − mark)/mark × 100 with decimal.js, 2 dp. Neutral wording only ("premium", "discount"; never undervalued/opportunity). The mark is not an oracle and not a redemption guarantee. Disclose: economic exposure only (no ownership/voting rights), risky, token may differ from mark, not available to U.S. persons.
+- **Reference-provider abstraction:** `assets.reference_provider` (PYTH | PRESTOCKS) decides; `getAssetReference` switches; `defaultReferenceClients()` supplies both clients to every production caller; no fallback between providers. Policies store `reference_provider`, `reference_usd`, `reference_timestamp`, `reference_snapshot_json` (the `pyth_*` policy columns are gone). PreStocks freshness = `CURRENT_RESPONSE` (received time, not a source time).
+- **Selected technical candidate: ANTHROPIC**, mint `Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw`, Token-2022, 9 decimals. Chosen on technical quality only (deepest Jupiter liquidity of the six products passing every no-funds check on 2026-09-24). Jupiter exact-mint PASS, USDC route PASS, BUY deposit rule PASS (live craft NOT TESTED). **SELL restricted** (transferFeeConfig 100 bps + transferHook on the deposit mint): live SELL disabled. The token carries a 1% Token-2022 transfer fee (disclosed in the live review).
+- **Excluded:** SPACEX (first-party lifecycle notice: gone public, must be swapped before 12 March 2027); OPENAI (not returned by Jupiter exact-mint search; pending ScaledUiAmount multiplier change). Other current products are ROUTE_VERIFIED on /markets but not enabled.
+- **Seed:** ANTHROPIC seeds on its own gates (PreStocks check + Jupiter recognition + route + BUY rule + live catalog still lists the exact mint). AAPLx still skips while Pyth is NOT_ENTITLED. Never seed the whole catalog; no Tessera or non-PreStocks tokens.
+- **Live money:** ANTHROPIC BUY reuses the Task 9 lifecycle unchanged (triggerMint = ANTHROPIC, target = mark-relative compiled USD, no conversion formula). In live mode the prepare/authorize path is reachable for it, always behind Jupiter auth and an explicit wallet signature. No funded PreStocks order has been placed.
 
 **Reconciliation (Vercel Hobby constraint)**
 - Reconciliation runs on **policy page load**, **manual "Refresh status"**, and **after cancel completion**. This is the primary path for the hackathon.
@@ -389,7 +399,7 @@ Scripts marked ✅ exist and work. The others are added in the milestone that in
 | ✅ Lint | `pnpm lint` (ESLint CLI with `--max-warnings=0`; Next.js 16 no longer ships `next lint`) |
 | ✅ Typecheck | `pnpm typecheck` (`next typegen && tsc --noEmit`; typegen creates the route types `tsc` needs) |
 | ✅ Unit + service tests | `pnpm test` (Vitest run) / `pnpm test:watch` |
-| ✅ Live provider checks (opt-in) | `pnpm test:live` (Pyth: symbology match, key entitlement, live mapping) and `pnpm test:jupiter-live` (Jupiter: key, exact-mint token, onchain extensions, quote-only route, auth challenge; no funds). Both load `.env.local`. Never part of `pnpm test` or CI. |
+| ✅ Live provider checks (opt-in) | `pnpm test:live` (Pyth: symbology match, key entitlement, live mapping), `pnpm test:jupiter-live` (Jupiter: key, exact-mint token, onchain extensions, quote-only route, auth challenge) and `pnpm test:prestocks-live` (PreStocks catalog, lifecycle notices, onchain mints, Jupiter exact-mint + quote-only route, BUY/SELL deposit rules, curated candidate). All NO FUNDS: no taker, no signing, no craft, no order. They load `.env.local`. Never part of `pnpm test` or CI. |
 | ✅ Repository tests (isolated in-process Postgres) | included in `pnpm test`; `tests/integration/` runs the committed migrations on PGlite, never Neon |
 | E2E | `pnpm test:e2e` (Playwright, mock wallet + mock Jupiter) |
 | ✅ Build | `pnpm build` |

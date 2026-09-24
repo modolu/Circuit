@@ -214,7 +214,8 @@ export const TRIGGER_USD_SCALE = 2;
 export const ABSOLUTE_PRICE_MAX_DECIMALS = 2;
 export const RELATIVE_PERCENT_MAX_DECIMALS = 2;
 
-export type ReferenceFreshnessLabel = "FRESH" | "CARRIED" | "STALE";
+/** Pyth: FRESH / CARRIED / STALE. PreStocks: CURRENT_RESPONSE (a successful current API response). */
+export type ReferenceFreshnessLabel = "FRESH" | "CARRIED" | "STALE" | "CURRENT_RESPONSE";
 
 /** The minimum a compile needs from a reference: the price and how trustworthy it is. */
 export interface CompileReference {
@@ -312,6 +313,8 @@ export interface PolicySentenceInput {
   direction: TriggerDirection;
   assetSymbol: string;
   underlyingSymbol: string;
+  /** e.g. "Pyth AAPL reference" or "PreStocks mark" (see `referenceName`). */
+  referenceName: string;
   quoteSymbol: string;
   amountDisplay: string;
   compiledTriggerUsd: string;
@@ -330,7 +333,7 @@ export function describePolicy(input: PolicySentenceInput): string {
   const sentence = `${action} if the USD price ${condition} ${formatUsd(input.compiledTriggerUsd)} before expiry.`;
   if (input.expressionType !== "RELATIVE_PERCENT" || !input.referenceUsd) return sentence;
   const relation = input.direction === "BELOW" ? "below" : "above";
-  return `${sentence} Compiled from ${input.expressionValue}% ${relation} the captured Pyth ${input.underlyingSymbol} reference of ${formatUsd(input.referenceUsd)}.`;
+  return `${sentence} Compiled from ${input.expressionValue}% ${relation} the captured ${input.referenceName} of ${formatUsd(input.referenceUsd)}.`;
 }
 
 export function describeSlippage(bps: number): string {
