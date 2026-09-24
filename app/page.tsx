@@ -28,7 +28,7 @@ export default async function ConnectPage() {
     <main className="mx-auto grid w-full max-w-[1180px] items-center gap-12 px-4 py-14 sm:px-6 lg:min-h-[calc(100dvh-56px-60px)] lg:grid-cols-[1.1fr_1fr] lg:gap-14 lg:py-16">
       <div>
         <SectionLabel tone="accent" className="mb-[18px]">
-          Programmable execution for tokenized public and private stocks
+          Programmable execution for tokenized public and private stocks on Solana
         </SectionLabel>
         <h1 className="text-[32px] leading-[1.08] font-semibold tracking-[-0.025em] sm:text-[44px]">
           Stocks that never sleep.
@@ -85,8 +85,7 @@ export default async function ConnectPage() {
         </ol>
         <figcaption className="relative mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-4 text-xs text-muted">
           <StatusChip tone="muted">ARCHITECTURE</StatusChip>
-          The intended product flow, not a live transaction. Integrations are added milestone by
-          milestone.
+          How a policy flows through Circuit. An illustration of the product flow, not a live transaction.
         </figcaption>
       </Card>
     </main>

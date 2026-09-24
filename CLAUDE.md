@@ -410,6 +410,8 @@ Scripts marked ✅ exist and work. The others are added in the milestone that in
 
 Never run `db:migrate` against production without the user's explicit go-ahead. Never use `drizzle-kit push` against shared databases.
 
+**Production deployment (Task 11).** Vercel project `circuit` (team `modolus-projects`), canonical URL **https://circuit-dun.vercel.app**, connected to `github.com/modolu/Circuit`: every push to `main` deploys production. `vercel.json` declares the Next.js framework; `.vercelignore` keeps local env files out of CLI uploads. Production env (names only): `DATABASE_URL`, `CIRCUIT_SESSION_SECRET` (production-only value), `JUPITER_API_KEY`, `PYTH_API_KEY`, `CIRCUIT_JUPITER_MODE=live`, `NEXT_PUBLIC_APP_URL=https://circuit-dun.vercel.app`, `NEXT_PUBLIC_SOLANA_CLUSTER=mainnet-beta`. `NEXT_PUBLIC_APP_URL` is inlined at build time and is the sign-in message origin and the Secure-cookie switch, so changing it requires a redeploy. Builds never run migrations; run `pnpm db:migrate` deliberately.
+
 ## 14. Git rules
 
 - Default branch `main`. Do not commit or push unless the user asks.
