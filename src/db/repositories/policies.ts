@@ -103,6 +103,9 @@ export type PolicyStateChanges = Partial<
     | "armedAt"
     | "executedAt"
     | "cancelledAt"
+    | "providerState"
+    | "providerStateUpdatedAt"
+    | "providerProgressJson"
   >
 >;
 

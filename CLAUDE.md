@@ -78,15 +78,16 @@ This mirrors `CIRCUIT_ARCHITECTURE.md` §6 exactly. **Do not add a new top-level
 │       ├── policies/[policyId]/reconcile/route.ts
 │       ├── jupiter/auth/{challenge,verify,logout}/route.ts, jupiter/status, jupiter/vault/register
 │       ├── policies/[policyId]/jupiter/deposit/route.ts   # prepare only, never signs
+│       ├── policies/[policyId]/jupiter/{arm,cancel,confirm-cancel}/route.ts   # verify signed tx → Jupiter
 │       └── cron/reconcile/route.ts
 ├── components/                  # presentation + browser interaction; no secrets
 │   ├── wallet/  jupiter/  policy/  asset/  ui/
 ├── src/
 │   ├── domain/                  # pure: policy.ts money.ts asset.ts errors.ts
-│   ├── services/                # use cases: create/compile/arm/cancel/reconcile-policy.ts, get-reference.ts, jupiter/{auth,vault,prepare-deposit,errors}.ts
+│   ├── services/                # use cases: create/compile/arm/cancel/reconcile-policy.ts, get-reference.ts, jupiter/{auth,vault,prepare-deposit,live-gates,arm-live,live-orders,reconcile-live,cancel-live,errors}.ts
 │   ├── integrations/
 │   │   ├── pyth/                # client.ts mapper.ts types.ts
-│   │   └── jupiter/             # client.ts trigger.ts schemas.ts types.ts token-compat.ts (+ mock adapter, see §11)
+│   │   └── jupiter/             # client.ts trigger.ts schemas.ts types.ts token-compat.ts signed-transaction.ts (+ mock adapter, see §11)
 │   ├── db/                      # client.ts schema.ts repositories/ migrations/
 │   ├── auth/                    # wallet-message.ts verify-wallet.ts session.ts jupiter-session.ts
 │   ├── validation/              # policy.ts api.ts (Zod schemas)
@@ -204,6 +205,7 @@ Vendor-specific names (Jupiter/Pyth field names) must not appear outside `src/in
   - The compiler output uses Circuit-internal `orderFamily`/`triggerCondition`. Jupiter field names are mapped only in the Jupiter integration.
   - USDC is verified config (`src/config/tokens.ts`: Circle docs plus a mainnet mint check, 6 decimals).
   - SELL amounts are raw token units. AAPLx's `scaledUiAmountConfig` means wallets may display a scaled amount, so revisit the UI multiplier before live SELL.
+  - **ScaledUiAmount is display-only (Task 9).** UI amount = raw × multiplier; raw balances never change and transactions use raw amounts. The multiplier is NEVER applied to a USD price or trigger: Circuit never computes `trigger = Pyth × multiplier`.
   - The review sentence comes from `describePolicy` (structured fields only).
 
 ## 9. Error-handling conventions
@@ -244,7 +246,7 @@ Vendor-specific names (Jupiter/Pyth field names) must not appear outside `src/in
 
 Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/config/env.ts`.
 
-- **Both modes implement one internal provider interface** (`getAuthChallenge, exchangeSignedChallenge, resolveVault, prepareDeposit, createPriceOrder, getOrder, cancelOrder`). Services depend on the interface, never on a mode check.
+- **Both modes implement one internal provider interface** (`getAuthChallenge, exchangeSignedChallenge, resolveVault, prepareDeposit, createPriceOrder, getOrder, cancelOrder`). Services depend on the interface, never on a mode check. **Deviation (Task 9, §19):** the live flow needs the user's JWT, a wallet-signed deposit and a two-step withdrawal, so live policies use the Jupiter services in `src/services/jupiter/`; the mock keeps `ExecutionProvider`. Routes dispatch by `policies.provider`.
 - **Mock adapter** lives in `src/integrations/jupiter/` and is backed by `tests/fixtures/`. It is used by default for local dev, unit/service tests, and Playwright e2e. Mock data must be **unmistakably fake**: IDs and signatures carry a visible `mock_` prefix and are not valid base58 signatures. Policies record the mode that armed them, and the UI shows a persistent **"SIMULATED — no onchain order"** badge. Mock evidence is never presented as onchain evidence in the demo, README, or screenshots.
 - **Live adapter** calls Jupiter Trigger V2 server-side with `JUPITER_API_KEY`. Implement it from **current official Trigger V2 docs only**. Record observed real responses as fixtures (with secrets and JWTs stripped) and derive types from them. Never type provider fields from memory.
 - Selecting `live` without the required keys fails fast at startup via env validation. `mock` does not require `JUPITER_API_KEY`.
@@ -318,7 +320,7 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
   - Values known at compile time are separate from `depositRequestId`, `depositSignedTx` and `userPubkey` (`toCreatePriceOrderRequest`).
 - **Numeric boundary:** `triggerPriceUsd` is a JSON number. `toProviderPriceNumber` converts Circuit's exact decimal string only at this boundary, and refuses anything over 15 significant digits or that doesn't round-trip exactly. The database and domain stay exact strings.
 - **Provider minimum:** `JUPITER_TRIGGER_MIN_ORDER_USD = "10"` per order (deposit value at market price). Drafts may be smaller. Live arming must check `meetsProviderMinimum` with a current price **before** asking for a wallet signature.
-- **States:** `normalizeJupiterOrderState`: open→OPEN, filled→FILLED, cancelled→CANCELLED, expired→EXPIRED, failed→FAILED. pending/executing/pending_withdraw→IN_PROGRESS (no transition). Anything else→UNKNOWN (never guessed).
+- **States:** `normalizeJupiterOrderState` maps Jupiter's documented `orderState` to `LIVE_PROVIDER_STATES` (PENDING, OPEN, EXECUTING, FILLED, PENDING_WITHDRAW, CANCELLED, EXPIRED, FAILED). `rawState` values are never mapped. Anything else → UNKNOWN (never guessed). The Circuit mapping is in Task 9 below.
 - **Idempotency:** Trigger has no client request id. The deposit `requestId` is the provider idempotency key; persist it before the wallet signs.
 - **Token-2022** (`token-compat.ts`): deposit (input) mints with `transferFeeConfig` or `transferHook` are rejected unless whitelisted.
 - **AAPLx findings (Task 7):**
@@ -326,7 +328,7 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
   - Quote-only route 10.5 USDC → AAPLx exists. The reverse also quotes.
   - Onchain: **no transferFeeConfig; transferHook present with programId null**. Also permanentDelegate, defaultAccountState, scaledUiAmountConfig, pausable (not paused), confidentialTransferMint, and a freeze authority.
   - **BUY (deposit USDC): compatible per docs. SELL (deposit AAPLx): RESTRICTED unless whitelisted.**
-  - The **ScaledUiAmount multiplier is ≈1.00327** (new multiplier active), and Jupiter triggers on AAPLx's own USD price. Quantify the Pyth AAPL vs AAPLx gap before any live order.
+  - The **ScaledUiAmount multiplier is ≈1.00327** (new multiplier active). It is display-only; see the reference basis in Task 9.
 - **Proven vs not** (`assets.ts` `jupiter.levels`):
   - PASSED: identity, token recognition, spot route.
   - RESTRICTED: extensions (SELL).
@@ -344,9 +346,19 @@ Controlled by **`CIRCUIT_JUPITER_MODE=mock|live`**, read only through `src/confi
 - **Vault:** `GET /api/jupiter/status` looks up the vault (404 → NOT_REGISTERED) and never returns the JWT. `POST /api/jupiter/vault/register` is an **explicit click only** (never on page load). 409 is success (existing vault).
 - **Live-only UI:** the Jupiter panel renders on the dashboard only in live mode. Mock mode is unchanged; the Jupiter routes refuse with `PROVIDER_UNAVAILABLE` and never call Jupiter.
 - **BUY-only live.** SELL is rejected before any craft: "Live AAPLx sell orders are not enabled because the token's transfer-hook deposit path has not been verified with Jupiter Trigger."
-- **EXECUTION_PRICE_CALIBRATION_REQUIRED:** Jupiter triggers on the token's USD price, and Circuit compiles from the Pyth underlying. `compiledTriggerUsd` must **not** be copied blindly into `triggerPriceUsd`. AAPLx `executionPriceCalibration.status = "REQUIRED"` blocks live deposits until calibrated with an entitled Pyth key.
-- **Deposit preparation** (`POST /api/policies/[id]/jupiter/deposit`): the gates are live mode, JWT, owned unexpired DRAFT, BUY, active asset, `liveBuyDepositGate` (Pyth PASSED + BUY not restricted + CALIBRATED; malformed evidence fails closed), USDC → stock mints, and ≥ 10 USD. Reservation `PREPARING` row → `/deposit/craft` outside any DB transaction → CAS to `CRAFTED` with the requestId **committed before** the unsigned tx is returned. There is one active preparation per policy (partial unique index). A failed craft or a stale (>60 s) reservation becomes `INVALIDATED`. **Production is blocked** (Pyth NOT_ENTITLED, calibration REQUIRED).
-- **No-signing boundary (Task 8):** the only wallet signature is the off-chain Jupiter auth message. Never call `signTransaction`/`sendTransaction` for a deposit, never submit the unsigned tx, never call `/orders/price`, and never persist a signed deposit. A boundary test enforces this for the Jupiter UI/services/routes.
+- **Deposit preparation** (`POST /api/policies/[id]/jupiter/deposit`): the gates are live mode, JWT, owned unexpired DRAFT, BUY, active asset, `liveBuyDepositGate` (Pyth PASSED + BUY not restricted + reference basis RESOLVED; malformed evidence fails closed), USDC → stock mints, ≥ 10 USD, the wallet's own vault (`GET /vault`), crafted `receiverAddress` = that vault, and fee payer = the wallet. Reservation `PREPARING` row → `/deposit/craft` outside any DB transaction → CAS to `CRAFTED` with the requestId **committed before** the unsigned tx is returned. One active preparation per policy. A failed craft or a stale (>60 s) reservation becomes `INVALIDATED`; an unsubmitted CRAFTED older than 30 s is re-crafted (blockhash freshness). **Production is blocked** (Pyth NOT_ENTITLED).
+
+**Live Jupiter order lifecycle (Task 9; Arch §5.3, §5.5, §5.9, §5.10, §11, §24)**
+- **Sequence:** DRAFT → Step 1 "Prepare Jupiter deposit" → Step 2 review → Step 3 explicit **"Authorize deposit & arm"** (`wallet.signTransaction` on the exact prepared `VersionedTransaction`) → `POST /api/policies/[id]/jupiter/arm` → server verifies → one DB tx commits `deposit_tx_signature` (+ transient signed tx) and DRAFT → ARMING → `POST /orders/price` → ARMED only on 200 with `depositConfirmed` and a matching `txSignature` (else ARMING with the order id until history shows it open).
+- **BUY-only live.** SELL stays in the domain, compiler and mock, but live SELL fails before craft, signing or create.
+- **Reference basis** (`assets.metadata.referenceBasis`, replaces `executionPriceCalibration`): Pyth `Equity.US.AAPL/USD` is the independent policy reference; the compiled USD target goes to Jupiter **unchanged** (`triggerMapping: IDENTITY`, no multiplier, no invented basis adjustment); Jupiter monitors **AAPLx/USD**, a secondary-market price that can trade at a premium or discount to AAPL. The live review must say so. Never claim Pyth controls Jupiter's trigger. Evidence: Jupiter Price V3 `usdPrice` is the scaled per-displayed-token price (`usdPricePrescaled` is separate).
+- **Signing boundaries:** wallets sign only on two explicit clicks: "Authorize deposit & arm" and "Confirm withdrawal". Never on page load, refresh, reconcile or in an effect. No private keys, no server-side signing, no `sendTransaction`: Circuit forwards verified signed transactions to Jupiter, which lands them. A boundary test enforces this.
+- **Signed-tx integrity** (`signed-transaction.ts`): identical message bytes to the persisted unsigned tx, the wallet's Ed25519 signature verifies, no other signature slot changed, canonical bytes. Reject modified, wrong-signer, unsigned, malformed or another preparation's transactions. Never log transaction bodies.
+- **Recovery/idempotency:** timeout/network/5xx/malformed/duplicate-deposit on create = AMBIGUOUS → stay ARMING, never a new deposit or signature. Reconcile finds the order by the persisted deposit signature + wallet + mints + amount (one → recover; zero → pending; several → `PROVIDER_ORDER_AMBIGUOUS`). Only documented pre-landing rejections (400 non-duplicate, 403) → FAILED. 401 → clear the Jupiter cookie; after re-auth, "Resubmit signed deposit" resends the stored signed tx (≥ 60 s after the last attempt, history checked first). First submission is a CAS, so concurrent arms create one order.
+- **Provider state** (`policies.provider_state`): pending → ARMING; open/executing/pending_withdraw → ARMED (the UI shows EXECUTING / cancellation pending); filled → EXECUTED; cancelled → CANCELLED; expired → EXPIRED; failed → FAILED. Partial fills stay ARMED + EXECUTING with provider-reported progress only. Terminal states never move.
+- **Evidence:** ONCHAIN execution only with Jupiter's `inputUsed`, `outputAmount` and a genuine fill signature; `transaction_signature` = latest successful fill (never the deposit); `fill_json.fills` keeps every fill. Solscan links only for real 64-byte signatures.
+- **Cancellation:** "Cancel & withdraw" → history check (a fill wins) → `POST /orders/price/cancel/{id}` (fills stop; unsigned withdrawal persisted in `jupiter_cancel_preparations`) → explicit "Confirm withdrawal" → verified → `confirm-cancel` → CANCELLED. Timeouts/401 keep it retryable with the same signed withdrawal; a 400 requires re-initiating. Expired orders use the same flow but stay EXPIRED (`FUNDS_WITHDRAWN`). Never EXECUTED → CANCELLED.
+- **Pyth entitlement blocker:** AAPLx `pythLiveCheck` stays `NOT_ENTITLED` until `pnpm test:live` passes with an equity-entitled key, so production cannot seed AAPLx, create AAPLx policies, or arm live. Do not weaken this gate for testing; tests use fixture assets.
 
 **Reconciliation (Vercel Hobby constraint)**
 - Reconciliation runs on **policy page load**, **manual "Refresh status"**, and **after cancel completion**. This is the primary path for the hackathon.
@@ -467,6 +479,8 @@ Demo-ready means **all** of the following hold on the deployed Vercel URL. `live
 | `JUPITER_API_KEY` | Listed as required | Required only in `live` mode | Mock mode must run without provider credentials. |
 | Simulated execution | Not specified | `mock_provider_orders` table; `MOCK_PROVIDER` event source; `executions.evidence_source` with nullable signature/output for SIMULATED rows | Durable demo lifecycle without conflating mock state with Circuit state or fabricating Solana evidence. Documented in Arch §5.4, §5.5, §5.8 and §11. |
 | `policy_events` columns | id, policy_id, event_type, source, payload, created_at | Adds `sequence_number` (bigint identity). `created_at` defaults to `clock_timestamp()`. Events are ordered by (created_at, sequence_number). | Several events written in one transaction can share a timestamp, so the audit trail needs a database-assigned tie-breaker to keep insertion order. |
+| Live provider interface | One provider interface for both modes (§11) | Live policies use `src/services/jupiter/*` (JWT + wallet-signed deposit + two-step withdrawal); the mock keeps `ExecutionProvider` | The live flow cannot be expressed as `createOrder/getOrder/cancelOrder` without a user signature and JWT. Documented in Arch §11. |
+| Signed deposit persistence | Arch §5.9 (Task 8): never stored | Stored only while submission is unresolved, cleared on CONSUMED/INVALIDATED | Allows the documented idempotent create retry after a 401 or ambiguous failure without a second wallet signature. Documented in Arch §5.9. |
 | Policy checks | Constraints listed in Arch §5.3 | Also: `max_slippage_bps` between 0 and 10000 (structural bound only), non-negative execution amounts, `decimals` 0–255 | Cheap structural guards. The product's allowed slippage range is still decided in Milestone 3. |
 
 These should be recorded in `CIRCUIT_ARCHITECTURE.md` when the user authorizes editing it.

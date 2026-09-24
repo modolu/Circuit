@@ -176,7 +176,14 @@ describe("live BUY deposit gate", () => {
       levels: {},
       sides: { BUY: { result: "PASSED", detail: "x" }, SELL: { result: "RESTRICTED", detail: "x" } },
     },
-    executionPriceCalibration: { status: "CALIBRATED", detail: "x" },
+    referenceBasis: {
+      status: "RESOLVED",
+      policyReference: "Pyth Equity.US.AAPL/USD",
+      executionMonitor: "Jupiter AAPLx/USD",
+      triggerMapping: "IDENTITY",
+      disclosure: "x",
+      detail: "x",
+    },
     verification: { pythLiveCheck: { status: "PASSED" } },
   } as unknown as AssetMetadata;
 
@@ -186,12 +193,13 @@ describe("live BUY deposit gate", () => {
     expect(liveBuyDepositGate(parsed)).toMatchObject({ ok: false });
   });
 
-  it("requires Pyth, BUY compatibility and calibration", () => {
+  it("requires Pyth, BUY compatibility and a resolved reference basis", () => {
     expect(liveBuyDepositGate(base)).toEqual({ ok: true });
     expect(liveBuyDepositGate({ ...base, verification: { pythLiveCheck: { status: "NOT_ENTITLED" } } })).toMatchObject({ reason: "PYTH_LIVE_CHECK_REQUIRED" });
     expect(liveBuyDepositGate({ ...base, jupiter: undefined })).toMatchObject({ reason: "BUY_DEPOSIT_NOT_COMPATIBLE" });
-    expect(liveBuyDepositGate({ ...base, executionPriceCalibration: { status: "REQUIRED", detail: "x" } })).toMatchObject({
-      reason: "EXECUTION_PRICE_CALIBRATION_REQUIRED",
+    expect(liveBuyDepositGate({ ...base, referenceBasis: { ...base.referenceBasis!, status: "UNRESOLVED" } })).toMatchObject({
+      reason: "REFERENCE_BASIS_UNRESOLVED",
     });
+    expect(liveBuyDepositGate({ ...base, referenceBasis: undefined })).toMatchObject({ reason: "REFERENCE_BASIS_UNRESOLVED" });
   });
 });

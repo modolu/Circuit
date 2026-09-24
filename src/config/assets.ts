@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   comparisonFeedSchema,
   EXECUTION_STATUSES,
-  executionPriceCalibrationSchema,
+  referenceBasisSchema,
   jupiterVerificationSchema,
   primaryReferenceSchema,
 } from "../domain/asset.ts";
@@ -35,7 +35,7 @@ export const verifiedAssetSchema = z.object({
   // Execution stays disabled until Jupiter Trigger compatibility is verified (§27 step 4–5).
   execution: z.object({ status: z.enum(EXECUTION_STATUSES) }),
   jupiter: jupiterVerificationSchema,
-  executionPriceCalibration: executionPriceCalibrationSchema,
+  referenceBasis: referenceBasisSchema,
   verification: z.object({
     issuerSources: z.array(z.url()).min(1),
     mintSources: z.array(z.string().min(1)).min(1),
@@ -110,7 +110,7 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
         },
         TRIGGER_DEPOSIT_CRAFT_VERIFIED: {
           result: "NOT_TESTED",
-          detail: "Needs a wallet-signed JWT and a vault. Task 8 builds the prepare path, but it stays blocked by the Pyth live check and execution-price calibration.",
+          detail: "Needs a wallet-signed JWT and a vault. The Task 8/9 prepare path exists but stays blocked by the Pyth live check.",
         },
         LIVE_TRIGGER_ORDER_VERIFIED: { result: "NOT_TESTED", detail: "No funded order has been placed (Task 9)." },
       },
@@ -125,10 +125,14 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
         },
       },
     },
-    executionPriceCalibration: {
-      status: "REQUIRED",
+    referenceBasis: {
+      status: "RESOLVED",
+      policyReference: "Pyth Equity.US.AAPL/USD (independent underlying Apple equity reference)",
+      executionMonitor: "Jupiter Trigger monitors AAPLx/USD (the token's secondary-market price)",
+      triggerMapping: "IDENTITY",
+      disclosure: "AAPLx is a secondary-market token and may trade at a premium or discount to underlying AAPL.",
       detail:
-        "Jupiter triggers on AAPLx's USD price; Circuit compiles from Pyth AAPL. AAPLx has a ScaledUiAmount multiplier (≈1.00327 observed 2026-09-23). The AAPL → AAPLx trigger relationship must be measured with an entitled Pyth key before any live order or deposit signing.",
+        "Task 9 decision (2026-09-24). The compiled USD target is sent to Jupiter unchanged. ScaledUiAmount changes displayed token quantities only (raw amounts are unchanged and used for transactions; Solana Scaled UI Amount docs, xStocks multiplier guide), so no multiplier is applied to the trigger. Evidence: Jupiter Price V3 for AAPLx reported usdPrice 336.44 (scaled, per displayed token) alongside a separate usdPricePrescaled 337.54 = usdPrice × multiplier 1.00327, and stockData (underlying AAPL) 337.10; xStocks price-data quote 336.915. xStocks secondary-market prices are set by supply and demand (xStocks FAQ).",
     },
     verification: {
       issuerSources: ["https://api.backed.fi/api/v2/public/assets", "https://api.backed.fi/api/v1/token"],
@@ -149,9 +153,9 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
     },
     notes: [
       "Token-2022 extensions: metadataPointer, permanentDelegate, defaultAccountState, scaledUiAmountConfig, pausableConfig, confidentialTransferMint, transferHook, tokenMetadata.",
-      "scaledUiAmountConfig: wallet UI amounts may differ from raw amount ÷ 10^decimals. Money math must use raw atomic units.",
+      "scaledUiAmountConfig: displayed (UI) amount = raw amount × multiplier; raw balances never change. Transactions and money math use raw atomic units. The multiplier is never applied to USD trigger prices.",
       "Issuer controls (permanent delegate, pausable, freeze authority) exist on this mint.",
-      "ScaledUiAmount multiplier observed 2026-09-23: 1.0026642075893797 → newMultiplier 1.0032690125398187 (effective 1786149000, already active). Jupiter triggers on AAPLx's own USD price, which may differ from Pyth AAPL by this multiplier; quantify with an entitled Pyth key before live orders.",
+      "ScaledUiAmount multiplier observed 2026-09-23: 1.0026642075893797 → newMultiplier 1.0032690125398187 (effective 1786149000, already active). Display-only: it scales token quantities, not the USD trigger. Jupiter monitors AAPLx's own secondary-market USD price (see referenceBasis).",
     ],
   },
 ];

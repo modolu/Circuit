@@ -17,6 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 import {
   DEFAULT_EXECUTION_PROVIDER,
+  LIVE_PROVIDER_STATES,
   MAX_SLIPPAGE_BPS_CEILING,
   POLICY_EVENT_SOURCES,
   POLICY_SIDES,
@@ -45,6 +46,15 @@ export const policyStatus = pgEnum("policy_status", POLICY_STATUSES);
 export const policyEventSource = pgEnum("policy_event_source", POLICY_EVENT_SOURCES);
 export const executionEvidenceSource = pgEnum("execution_evidence_source", ["ONCHAIN", "SIMULATED"]);
 export const mockProviderOrderState = pgEnum("mock_provider_order_state", PROVIDER_ORDER_STATES);
+/** Live Jupiter order display state (Task 9), stored beside the coarser Circuit status. */
+export const liveProviderState = pgEnum("live_provider_state", LIVE_PROVIDER_STATES);
+export const jupiterCancelPreparationStatus = pgEnum("jupiter_cancel_preparation_status", [
+  "PREPARED",
+  "SUBMITTING",
+  "CONFIRMED",
+  "INVALIDATED",
+]);
+export const jupiterCancelPurpose = pgEnum("jupiter_cancel_purpose", ["CANCEL", "WITHDRAW_EXPIRED"]);
 export const jupiterDepositPreparationStatus = pgEnum("jupiter_deposit_preparation_status", [
   "PREPARING",
   "CRAFTED",
@@ -118,6 +128,14 @@ export const policies = pgTable(
 
     provider: text("provider").notNull().default(DEFAULT_EXECUTION_PROVIDER),
     providerOrderId: text("provider_order_id"),
+    /**
+     * Live Jupiter display state (e.g. EXECUTING, PENDING_WITHDRAW) that the coarse Circuit
+     * status cannot express. Null for drafts and simulated policies.
+     */
+    providerState: liveProviderState("provider_state"),
+    providerStateUpdatedAt: timestamptz("provider_state_updated_at"),
+    /** Provider-reported progress only (inputUsed, outputAmount, fillPercent as strings). Never computed. */
+    providerProgressJson: jsonb("provider_progress_json").$type<Record<string, unknown>>(),
 
     failureCode: text("failure_code"),
     failureMessage: text("failure_message"),
@@ -270,9 +288,13 @@ export type MockProviderOrder = typeof mockProviderOrders.$inferSelect;
  * - PREPARING: a reservation made before calling /deposit/craft (no DB transaction is held over HTTP).
  * - CRAFTED: Jupiter's single-use deposit requestId and the UNSIGNED transaction, committed
  *   before the transaction is ever returned for signing.
- * - CONSUMED: the requestId was used by order creation (Task 9).
- * - INVALIDATED: released (craft failed, stale reservation, or an unusable transaction).
- * Never stores signatures, signed transactions or private keys.
+ * - CONSUMED: the requestId was used by a confirmed order creation (Task 9).
+ * - INVALIDATED: released (craft failed, stale reservation, definitive rejection).
+ * Submission (Task 9) is CRAFTED with `submission_started_at` set: the wallet's public
+ * deposit signature is committed BEFORE POST /orders/price, as the recovery anchor.
+ * `signed_transaction` is held only while submission is unresolved (for Jupiter's
+ * documented idempotent create retry without a second wallet signature) and is cleared
+ * on CONSUMED/INVALIDATED. Never stores private keys or the Jupiter JWT.
  */
 export const jupiterDepositPreparations = pgTable(
   "jupiter_deposit_preparations",
@@ -292,6 +314,12 @@ export const jupiterDepositPreparations = pgTable(
     inputMint: text("input_mint").notNull(),
     outputMint: text("output_mint").notNull(),
     inputAmountAtomic: atomicAmount("input_amount_atomic").notNull(),
+    /** Public transaction id of the wallet-signed deposit (base58). The ARMING recovery anchor. */
+    depositTxSignature: text("deposit_tx_signature").unique(),
+    signedTransaction: text("signed_transaction"),
+    submissionStartedAt: timestamptz("submission_started_at"),
+    consumedAt: timestamptz("consumed_at"),
+    providerOrderId: text("provider_order_id"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at")
       .notNull()
@@ -299,6 +327,10 @@ export const jupiterDepositPreparations = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    check(
+      "jupiter_deposit_preparations_submission_has_signature",
+      sql`${t.submissionStartedAt} IS NULL OR ${t.depositTxSignature} IS NOT NULL`,
+    ),
     uniqueIndex("jupiter_deposit_preparations_one_active_per_policy")
       .on(t.policyId)
       .where(sql`${t.status} IN ('PREPARING', 'CRAFTED')`),
@@ -311,3 +343,52 @@ export const jupiterDepositPreparations = pgTable(
 );
 
 export type JupiterDepositPreparation = typeof jupiterDepositPreparations.$inferSelect;
+
+/**
+ * Two-step Jupiter cancellation / withdrawal state (Task 9). Jupiter's cancel call stops
+ * fills and returns an UNSIGNED withdrawal transaction plus a cancelRequestId; Circuit
+ * persists both so the wallet's signed transaction can be verified against exactly what
+ * was prepared. The verified signed transaction (and its public transaction id, when the
+ * wallet is the fee payer) is committed before confirm-cancel; otherwise the withdrawal
+ * signature is recorded from Jupiter's confirm response. `signed_transaction` is held only
+ * while confirmation is unresolved and cleared after.
+ * Calling cancel again re-crafts (documented as idempotent): the previous row is invalidated.
+ */
+export const jupiterCancelPreparations = pgTable(
+  "jupiter_cancel_preparations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id),
+    walletId: uuid("wallet_id")
+      .notNull()
+      .references(() => wallets.id),
+    providerOrderId: text("provider_order_id").notNull(),
+    purpose: jupiterCancelPurpose("purpose").notNull(),
+    status: jupiterCancelPreparationStatus("status").notNull(),
+    cancelRequestId: text("cancel_request_id").notNull(),
+    /** Base64 UNSIGNED withdrawal transaction exactly as Jupiter returned it. */
+    unsignedTransaction: text("unsigned_transaction").notNull(),
+    withdrawalTxSignature: text("withdrawal_tx_signature"),
+    signedTransaction: text("signed_transaction"),
+    submissionStartedAt: timestamptz("submission_started_at"),
+    confirmedAt: timestamptz("confirmed_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("jupiter_cancel_preparations_one_active_per_policy")
+      .on(t.policyId)
+      .where(sql`${t.status} IN ('PREPARED', 'SUBMITTING')`),
+    check(
+      "jupiter_cancel_preparations_submitting_has_signed_tx",
+      sql`${t.status} <> 'SUBMITTING' OR ${t.signedTransaction} IS NOT NULL`,
+    ),
+  ],
+);
+
+export type JupiterCancelPreparation = typeof jupiterCancelPreparations.$inferSelect;

@@ -26,6 +26,9 @@ export async function cancelPolicy(
   { provider }: { provider: ExecutionProvider },
 ): Promise<{ policy: Policy; outcome: CancelOutcome }> {
   const policy = await loadOwnedPolicy(db, wallet.id, policyId);
+  if (!provider.configured && policy.provider === provider.id) {
+    throw new AppError("POLICY_STATE_CONFLICT", "Live Jupiter orders are cancelled with Cancel & withdraw.");
+  }
   if (policy.status !== "ARMED" || !policy.providerOrderId) {
     throw new AppError("POLICY_STATE_CONFLICT", `A ${policy.status} policy cannot be cancelled with the provider.`);
   }

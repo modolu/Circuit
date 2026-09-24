@@ -5,8 +5,11 @@ import { clearJupiterSessionCookie, readJupiterJwtFromRequest } from "@/src/auth
 import { getDb, type Database } from "@/src/db/client";
 import type { Wallet } from "@/src/db/schema";
 import { toAppError } from "@/src/domain/errors";
+import { z } from "zod";
+import { AppError } from "@/src/domain/errors";
 import { getJupiterClient, type JupiterClient } from "@/src/integrations/jupiter/client";
-import { getExecutionMode } from "@/src/integrations/jupiter/provider";
+import { getExecutionMode, getExecutionProvider } from "@/src/integrations/jupiter/provider";
+import type { ExecutionProvider } from "@/src/integrations/jupiter/types";
 import type { Logger } from "@/src/observability/logger";
 import { jsonError } from "./http";
 
@@ -31,6 +34,17 @@ export async function jupiterRouteContext(request: Request): Promise<{
     client: getJupiterClient(),
     jwt: readJupiterJwtFromRequest(request, wallet.address),
   };
+}
+
+const policyIdSchema = z.uuid();
+
+/** Jupiter preamble plus a validated policy id and the mode's execution provider (for shared routes). */
+export async function jupiterPolicyContext(request: Request, params: Promise<{ policyId: string }>) {
+  const context = await jupiterRouteContext(request);
+  const parsed = policyIdSchema.safeParse((await params).policyId);
+  if (!parsed.success) throw new AppError("VALIDATION_ERROR", "Invalid request: check policyId.");
+  const provider: ExecutionProvider = getExecutionProvider(context.db, context.mode);
+  return { ...context, policyId: parsed.data, provider };
 }
 
 /** Error response that also drops the Jupiter cookie when Jupiter says the session is no longer valid. */

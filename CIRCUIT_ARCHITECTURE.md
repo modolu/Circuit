@@ -243,6 +243,9 @@ pyth_snapshot_json         jsonb NOT NULL
 
 provider                   text NOT NULL default 'jupiter_trigger_v2'
 provider_order_id          text NULL
+provider_state             enum NULL   PENDING | OPEN | EXECUTING | FILLED | PENDING_WITHDRAW | CANCELLED | EXPIRED | FAILED (live only, Task 9)
+provider_state_updated_at  timestamptz NULL
+provider_progress_json     jsonb NULL  provider-reported inputUsed / outputAmount / fillPercent (strings, never computed)
 
 failure_code               text NULL
 failure_message            text NULL
@@ -321,6 +324,8 @@ Evidence provenance, enforced by a CHECK constraint:
 - `SIMULATED`: both must be NULL. A simulated fill has no Solana transaction and no real output quantity, so Circuit records neither rather than fabricating them. `input_amount_atomic` is the policy's authorized amount, and `fill_json` says `simulated: true`.
 
 If Jupiter exposes multiple partial fills, keep raw detail in `fill_json` for MVP and aggregate into one logical execution record.
+
+Live Jupiter evidence (Task 9): a row is written only when Jupiter's order history reports the order `filled` with `inputUsed`, `outputAmount` and at least one successful `fill` event carrying a genuine 64-byte transaction signature. `input_amount_atomic`/`output_amount_atomic` are those exact provider strings. `transaction_signature` is the latest successful fill event's signature (never the deposit signature), and `fill_json.fills` holds every fill event: when an order filled in several transactions, `fill_json` is the complete evidence. `effective_price_usd` stays NULL (not derived).
 
 Only introduce first-class `execution_fills` after confirming provider semantics demand it.
 
@@ -428,9 +433,44 @@ Rules:
 - `PREPARING` is a reservation row inserted before the provider call; the Jupiter HTTP call never runs inside a DB transaction;
 - `PREPARING → CRAFTED` is a compare-and-set that stores the requestId and unsigned tx, committed before the API responds;
 - a failed craft, or a `PREPARING` row older than 60 s (a crashed request), becomes `INVALIDATED`;
-- `CONSUMED` is reserved for Task 9 (order created with this requestId);
-- a **signed** deposit transaction is never stored here or anywhere else in Circuit;
+- `CONSUMED`: Jupiter confirmed an order for this requestId (`provider_order_id`, `consumed_at`);
 - the JWT is never stored here.
+
+Task 9 additions (migration `0005`):
+
+```text
+deposit_tx_signature   text UNIQUE NULL   -- public transaction id of the wallet-signed deposit (recovery anchor)
+signed_transaction     text NULL          -- verified signed deposit, held ONLY while submission is unresolved
+submission_started_at  timestamptz NULL   -- CHECK: set ⇒ deposit_tx_signature set
+consumed_at            timestamptz NULL
+provider_order_id      text NULL
+```
+
+- Submission is `CRAFTED` + `submission_started_at`: the deposit signature (and the verified signed transaction) is committed, together with `DRAFT → ARMING`, **before** `POST /orders/price`.
+- `signed_transaction` exists only so the SAME signed deposit can be resubmitted after a Jupiter 401 or an ambiguous failure (Jupiter documents create retries with the same deposit as idempotent) without a second wallet signature. It is cleared on `CONSUMED`/`INVALIDATED` and never logged. This supersedes the Task 8 rule that no signed deposit is stored.
+- Freshness: an unsubmitted `CRAFTED` preparation older than 30 s is invalidated and re-crafted (its blockhash would expire before landing). Once submission starts it is never re-crafted.
+
+### 5.10 `jupiter_cancel_preparations`
+
+Two-step cancellation / withdrawal state (Task 9, migration `0005`). Jupiter's cancel call stops fills and returns an UNSIGNED withdrawal transaction plus a `cancelRequestId`; the signed withdrawal is verified against exactly that before `confirm-cancel`.
+
+```text
+id                      uuid PK
+policy_id               uuid FK policies.id NOT NULL
+wallet_id               uuid FK wallets.id NOT NULL
+provider_order_id       text NOT NULL
+purpose                 enum CANCEL | WITHDRAW_EXPIRED
+status                  enum PREPARED | SUBMITTING | CONFIRMED | INVALIDATED
+cancel_request_id       text NOT NULL
+unsigned_transaction    text NOT NULL      -- exactly as Jupiter returned it
+withdrawal_tx_signature text NULL          -- tx id when the wallet is fee payer; else from Jupiter's confirm response
+signed_transaction      text NULL          -- CHECK: required while SUBMITTING; cleared after
+submission_started_at   timestamptz NULL
+confirmed_at            timestamptz NULL
+created_at, updated_at  timestamptz NOT NULL
+```
+
+`UNIQUE (policy_id) WHERE status IN ('PREPARED','SUBMITTING')`: one active withdrawal per policy. Initiating again re-crafts (documented idempotent) and invalidates the previous row.
 
 ---
 
@@ -477,11 +517,15 @@ No new top-level directory without editing this file.
 │       ├── jupiter/status/route.ts
 │       ├── jupiter/vault/register/route.ts
 │       ├── policies/[policyId]/jupiter/deposit/route.ts   (prepare only; never signs or submits)
+│       ├── policies/[policyId]/jupiter/arm/route.ts       (verify signed deposit → create order)
+│       ├── policies/[policyId]/jupiter/cancel/route.ts    (step 1: stop fills, unsigned withdrawal)
+│       ├── policies/[policyId]/jupiter/confirm-cancel/route.ts (step 2: verify signed withdrawal → confirm)
 │       └── cron/reconcile/route.ts
 │
 ├── components/
 │   ├── wallet/
 │   ├── jupiter/        (live-mode Jupiter auth + vault panel)
+│   ├── policy/live-order-panel.tsx (live prepare → review → sign; ARMING/ARMED/withdrawal states)
 │   ├── policy/
 │   ├── asset/
 │   └── ui/
@@ -512,6 +556,11 @@ No new top-level directory without editing this file.
 │   │       ├── auth.ts             (challenge, base64 → base58 signature, verify)
 │   │       ├── vault.ts            (status, explicit registration)
 │   │       ├── prepare-deposit.ts  (gated BUY deposit preparation; requestId durability)
+│   │       ├── live-gates.ts       (shared live eligibility: BUY, Pyth, compatibility, reference basis, minimum)
+│   │       ├── arm-live.ts         (signed-deposit verification, create order, ambiguity handling)
+│   │       ├── live-orders.ts      (history lookup, order matching, fill evidence, state application)
+│   │       ├── reconcile-live.ts   (history reconciliation, ARMING recovery, mode dispatch)
+│   │       ├── cancel-live.ts      (two-step cancel / withdrawal)
 │   │       └── errors.ts           (Jupiter failure → AppError, live-mode and JWT guards)
 │   │
 │   ├── integrations/
@@ -520,7 +569,8 @@ No new top-level directory without editing this file.
 │   │   │   ├── mapper.ts
 │   │   │   └── types.ts
 │   │   └── jupiter/
-│   │       ├── client.ts     (HTTP: tokens, quote, auth, vault, deposit craft)
+│   │       ├── client.ts     (HTTP: tokens, quote, auth, vault, deposit craft, create, history, cancel)
+│   │       ├── signed-transaction.ts (exact-message + wallet-signature verification; never signs)
 │   │       ├── trigger.ts    (pure Circuit → Trigger V2 mapping, provider constants)
 │   │       ├── types.ts      (Circuit-owned provider contract)
 │   │       ├── schemas.ts    (Zod DTOs for Trigger V2, Tokens V2, Swap quote)
@@ -539,6 +589,7 @@ No new top-level directory without editing this file.
 │   │   │   ├── executions.ts
 │   │   │   ├── auth-nonces.ts
 │   │   │   ├── jupiter-deposit-preparations.ts
+│   │   │   ├── jupiter-cancel-preparations.ts
 │   │   │   └── mock-provider-orders.ts
 │   │   └── migrations/
 │   │
@@ -829,9 +880,48 @@ POST /api/policies/[id]/jupiter/deposit   prepare only (see §5.9); never signs,
 - Jupiter 401 → `PROVIDER_AUTH_REQUIRED`, the cookie is cleared, and the UI shows the expired/reconnect state. Gateway 403 (`{code,message}`) → `PROVIDER_UNAVAILABLE`; Trigger 403/400 → `PROVIDER_REJECTED`; timeouts/network/5xx/429/malformed → `PROVIDER_UNAVAILABLE` (retryable).
 - Mock mode is unchanged: these routes refuse with `PROVIDER_UNAVAILABLE` and never call Jupiter; the panel is not rendered.
 - **BUY only.** SELL is rejected before any craft: "Live AAPLx sell orders are not enabled because the token's transfer-hook deposit path has not been verified with Jupiter Trigger."
-- **Deposit gates, in order:** live mode → JWT cookie → owned DRAFT, unexpired policy → BUY → active asset → `liveBuyDepositGate` (Pyth live check PASSED, Jupiter BUY side not restricted/failed, execution-price calibration CALIBRATED) → USDC → stock-token mints → ≥ 10 USD. Missing or malformed evidence fails closed.
-- **Execution-price calibration blocker (`EXECUTION_PRICE_CALIBRATION_REQUIRED`).** Circuit compiles `compiledTriggerUsd` from Pyth's underlying equity (AAPL), while Jupiter triggers on the token's USD price (AAPLx, with a ScaledUiAmount multiplier). `compiledTriggerUsd` must not be copied blindly into `triggerPriceUsd`; live deposits stay blocked until the relationship is calibrated with an entitled Pyth key.
-- Production state: AAPLx has `pythLiveCheck: NOT_ENTITLED` and calibration `REQUIRED`, so deposit preparation is blocked there.
+- **Deposit gates, in order:** live mode → JWT cookie → owned DRAFT, unexpired policy → BUY → active asset → `liveBuyDepositGate` (Pyth live check PASSED, Jupiter BUY side not restricted/failed, reference basis RESOLVED) → USDC → stock-token mints → ≥ 10 USD → the wallet's own vault exists (`GET /vault`) → crafted `receiverAddress` = that vault and the transaction's fee payer = the wallet. Missing or malformed evidence fails closed.
+- Production state: AAPLx has `pythLiveCheck: NOT_ENTITLED`, so deposit preparation and live arming are blocked there.
+
+**ScaledUiAmount correction (Task 9).** Task 8's "execution-price calibration" blocker assumed AAPLx's ScaledUiAmount multiplier might have to be applied to the USD trigger. It must not. Per the Solana Scaled UI Amount docs and the xStocks multiplier guide, the multiplier changes DISPLAYED token quantities only (UI amount = raw × multiplier); raw balances never change and raw amounts are used in transactions. Jupiter's AAPLx `usdPrice` is the scaled, per-displayed-token price (observed 2026-09-24: `usdPrice` 336.44 beside a separate `usdPricePrescaled` 337.54 = 336.44 × 1.00327, and underlying AAPL `stockData.price` 337.10). Circuit never computes `trigger = Pyth × multiplier`. Proper scaled-balance handling (raw atomic amounts, scaled display) is unchanged.
+
+**Reference basis (`assets.metadata.referenceBasis`, replaces `executionPriceCalibration`).**
+
+```text
+Pyth Equity.US.AAPL/USD   independent policy reference; Circuit compiles the USD target from it
+Circuit compiled target    sent to Jupiter UNCHANGED as triggerPriceUsd (triggerMapping: IDENTITY)
+Jupiter AAPLx/USD          what Jupiter's trigger engine monitors (the token's secondary-market price)
+```
+
+AAPLx secondary-market prices are set by supply and demand (xStocks FAQ) and can trade at a premium or discount to AAPL. The live review discloses this. No basis-adjustment formula is invented, and no copy claims Pyth controls Jupiter's trigger. Gate code: `REFERENCE_BASIS_UNRESOLVED`.
+
+**Task 9: live order lifecycle (live mode only; docs re-verified 2026-09-24, OpenAPI unchanged since Task 7).**
+
+```text
+DRAFT
+→ POST /api/policies/[id]/jupiter/deposit        Step 1: prepare (unsigned tx + requestId committed)
+→ live review (Pyth reference · Circuit target · Jupiter AAPLx/USD monitor · vault · expiry · slippage)
+→ explicit "Authorize deposit & arm": wallet.signTransaction on the exact prepared VersionedTransaction
+→ POST /api/policies/[id]/jupiter/arm             server verifies the signed tx (below)
+→ one DB tx: deposit_tx_signature (+ transient signed tx) committed, DRAFT → ARMING, events
+→ POST /orders/price (body from persisted policy/config/preparation only)
+→ 200 + depositConfirmed + matching txSignature → provider_order_id, preparation CONSUMED, ARMING → ARMED
+→ reconcile (GET /orders/history) → EXECUTED / EXPIRED / FAILED / CANCELLED
+→ "Cancel & withdraw": POST /orders/price/cancel/{id} → explicit "Confirm withdrawal" signature
+→ POST /orders/price/confirm-cancel/{id} → CANCELLED (or EXPIRED + FUNDS_WITHDRAWN)
+```
+
+- **Signed-transaction integrity** (`signed-transaction.ts`), for deposits and withdrawals: strict base64; both deserialize as `VersionedTransaction`; serialized MESSAGE bytes identical to the persisted unsigned transaction; the wallet is a required signer and its Ed25519 signature verifies over exactly those bytes; no other signature slot changed; the bytes re-serialize identically. Anything else is rejected before Jupiter is called. Circuit never signs and never logs transaction bodies.
+- **Wallet consistency:** connected wallet = Circuit session wallet (UI) = Jupiter cookie wallet (cookie binding) = transaction signer (server). Jupiter also rejects `userPubkey` ≠ JWT wallet (403).
+- **Create failure semantics:** timeout, network, 5xx, 429, malformed or a `duplicate deposit` 400 are AMBIGUOUS: the policy stays ARMING, the deposit signature is the recovery anchor, and Circuit never crafts another deposit or asks for another signature. Only documented pre-landing rejections (other 400s, 403) mark ARMING → FAILED and invalidate the preparation. A 401 clears the Jupiter cookie and keeps ARMING; after re-auth the same signed deposit is resubmitted (explicit action, at least 60 s after the previous attempt, after checking history first).
+- **ARMING recovery** (read-only reconcile): search `state=active` and `state=past` history (paged, filtered by the stock mint) for an order whose `deposit` event `txSignature` equals `deposit_tx_signature` AND whose wallet, mints and `initialInputAmount` match. One match → record it (`PROVIDER_ORDER_RECOVERED`) and apply its state; zero → still pending; several → `PROVIDER_ORDER_AMBIGUOUS`, nothing guessed.
+- **Provider state mapping** (`policyStatusForLiveProviderState`, the single live mapping): `pending` → ARMING; `open`, `executing` (incl. partial fills), `pending_withdraw` → ARMED with `provider_state` showing the detail; `filled` → EXECUTED; `cancelled` → CANCELLED; `expired` → EXPIRED; `failed` → FAILED; anything else → logged, unchanged. An ARMING order found already terminal passes through ARMED first (two recorded transitions). Terminal Circuit states never move (EXECUTED never becomes CANCELLED).
+- **Partial fills:** stay ARMED + `provider_state = EXECUTING`; `provider_progress_json` shows Jupiter's `inputUsed`/`outputAmount`/`fillPercent` only. EXECUTED only on `filled` with complete evidence (see §5.5).
+- **Expired orders:** funds remain in the vault. EXPIRED stays the policy state; the same two-step flow withdraws (`WITHDRAW_EXPIRED`), recorded as `FUNDS_WITHDRAWN` with `provider_state = CANCELLED`, never as a cancellation.
+- **Cancellation:** step 1 refreshes history first (a fill wins: EXECUTED, no cancel); only `open`/`pending_withdraw`/`expired` orders are cancelled; `executing` is refused (retry later). CANCELLED only after confirm-cancel returns. Confirm timeout/5xx/401 → retry the same signed withdrawal; 400 → re-initiate for a fresh withdrawal.
+- **JWT expiry mid-flow** never loses durable state: preparations, deposit signatures and signed withdrawals survive; the user reconnects Jupiter and continues.
+- **Explorer links** only for genuine 64-byte signatures (deposit, fill, withdrawal): never for mock ids, provider UUIDs or missing values.
+- **Provider contract:** the live flow does not fit `ExecutionProvider` (it needs the user's JWT, a wallet-signed deposit and a two-step withdrawal), so live policies use the Jupiter services above. The mock keeps `ExecutionProvider`; `live.ts` still refuses the generic arm/cancel actions, and routes dispatch by `policies.provider`. Reconciliation of live orders needs the user's Jupiter session (there is no server-held JWT), so cron cannot reconcile them.
 
 Jupiter owns keeper execution. Circuit owns user policy, reference context, and local audit state.
 
@@ -907,6 +997,8 @@ A definitive provider rejection moves ARMING → FAILED. An ambiguous failure (t
 
 If provider succeeds and DB write fails, recovery must use provider idempotency/client request ID if supported.
 
+Live (Task 9): the persisted deposit signature is the recovery key. See §11 "Task 9: live order lifecycle".
+
 ---
 
 ## 14. Key flow — reconciliation
@@ -960,6 +1052,8 @@ POST /api/policies/:id/cancel
 ```
 
 Never show `CANCELLED` while the external order is still active.
+
+Live (Task 9): cancellation is Jupiter's two-step flow: `POST /orders/price/cancel/{id}` (fills stop, `pending_withdraw`, unsigned withdrawal persisted in §5.10) → explicit wallet signature → `POST /orders/price/confirm-cancel/{id}` → CANCELLED. See §11.
 
 If cancellation is pending, keep the true order state and expose pending cancellation separately.
 
@@ -1285,6 +1379,10 @@ Repeated reconciliation is safe.
 ### Jupiter deposit preparation
 
 Reservation, not a held transaction: insert a `PREPARING` row (partial unique index = one active per policy) → call `/deposit/craft` outside any DB transaction → compare-and-set to `CRAFTED` with the requestId, committed before responding. Concurrent callers receive the existing `CRAFTED` preparation or a retryable `POLICY_STATE_CONFLICT`; they never trigger a second craft. Verified with 5 simultaneous prepares → 1 craft, 1 active row.
+
+### Live arm (Task 9)
+
+The first submission is a compare-and-set on the CRAFTED preparation (`submission_started_at IS NULL`) in the same transaction as `DRAFT → ARMING`, so concurrent arms cannot both reach Jupiter (verified: 5 concurrent → 1 create). Resubmission of the same signed deposit requires the previous attempt to be older than 60 s.
 
 ### Cancel versus fill
 

@@ -36,6 +36,13 @@
       "when": 1790199409562,
       "tag": "0004_jupiter_deposit_preparations",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790208712741,
+      "tag": "0005_live_trigger_lifecycle",
+      "breakpoints": true
     }
   ]
 }

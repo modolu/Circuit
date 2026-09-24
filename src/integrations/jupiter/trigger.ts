@@ -1,5 +1,5 @@
 import { Dec, fromAtomicUnits } from "../../domain/money.ts";
-import type { PolicySide, ProviderOrderState, TriggerDirection } from "../../domain/policy.ts";
+import type { LiveProviderState, PolicySide, TriggerDirection } from "../../domain/policy.ts";
 import type { CreateSinglePriceOrderRequest, DepositCraftRequest } from "./schemas.ts";
 
 /*
@@ -13,6 +13,10 @@ import type { CreateSinglePriceOrderRequest, DepositCraftRequest } from "./schem
  *   and the trailing rules (below → triggerMint = inputMint, above → outputMint).
  * - Jupiter evaluates the trigger on the TOKEN's USD price from its own sources, not on
  *   Circuit's Pyth reference. Pyth informs the policy; it does not control execution.
+ * - Reference basis (Task 9, `assets.metadata.referenceBasis`): `triggerPriceUsd` is the
+ *   compiled USD target UNCHANGED. No ScaledUiAmount multiplier is ever applied: the
+ *   multiplier scales displayed token quantities, not USD prices, and the token's quoted
+ *   USD price is already per displayed token. There is no invented basis adjustment.
  */
 
 export const JUPITER_API_BASE_URL = "https://api.jup.ag";
@@ -147,27 +151,29 @@ export function meetsProviderMinimum({
 }
 
 /**
- * Maps Jupiter `orderState` into Circuit's provider states.
- * - pending / executing / pending_withdraw are IN_PROGRESS: not terminal, so Circuit makes no change.
- * - expired leaves funds in the vault; they are recovered with the two-step cancel/withdraw flow.
- * - cancelled only appears after confirm-cancel has landed the withdrawal.
+ * Maps Jupiter's documented price-order `orderState` (display state) into Circuit's live
+ * provider state. `rawState` values (e.g. `fill_success`, `partial_fill_success`) are
+ * NOT accepted here: they are finer-grained and stay in evidence payloads only.
+ * Anything unrecognized is UNKNOWN and must never be guessed at.
  */
-export function normalizeJupiterOrderState(orderState: string): ProviderOrderState | "IN_PROGRESS" | "UNKNOWN" {
+export function normalizeJupiterOrderState(orderState: string): LiveProviderState | "UNKNOWN" {
   switch (orderState) {
+    case "pending":
+      return "PENDING";
     case "open":
       return "OPEN";
+    case "executing":
+      return "EXECUTING";
     case "filled":
       return "FILLED";
+    case "pending_withdraw":
+      return "PENDING_WITHDRAW";
     case "cancelled":
       return "CANCELLED";
     case "expired":
       return "EXPIRED";
     case "failed":
       return "FAILED";
-    case "pending":
-    case "executing":
-    case "pending_withdraw":
-      return "IN_PROGRESS";
     default:
       return "UNKNOWN";
   }

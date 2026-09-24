@@ -1,20 +1,20 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeJupiterSession, JUPITER_SESSION_COOKIE_NAME } from "@/src/auth/jupiter-session";
+import { USDC } from "@/src/config/tokens";
 import { upsertAsset } from "@/src/db/repositories/assets";
 import { upsertWalletSeen } from "@/src/db/repositories/wallets";
 import { jupiterDepositPreparations, type Wallet } from "@/src/db/schema";
 import { JUPITER_VERIFICATION_LEVELS } from "@/src/domain/asset";
 import { AppError } from "@/src/domain/errors";
 import type * as jupiterClientModule from "@/src/integrations/jupiter/client";
-import { JupiterRequestError, type JupiterClient } from "@/src/integrations/jupiter/client";
-import type { DepositCraftRequest } from "@/src/integrations/jupiter/schemas";
+import { JupiterRequestError } from "@/src/integrations/jupiter/client";
 import { createPolicyDraft } from "@/src/services/create-policy";
 import { getAssetReference } from "@/src/services/get-reference";
 import { LIVE_SELL_DISABLED_MESSAGE, prepareJupiterDeposit } from "@/src/services/jupiter/prepare-deposit";
 import type { CreatePolicyRequest } from "@/src/validation/policy";
 import { fakeCatalogAsset } from "../fixtures/catalog";
-import * as f from "../fixtures/jupiter";
+import { FakeJupiter, TEST_CHALLENGE, TEST_JWT, TEST_VAULT } from "../fixtures/jupiter-fake";
 import { LIFECYCLE_NOW } from "../fixtures/lifecycle";
 import { fixturePyth } from "../fixtures/policy";
 import { createTestWallet } from "../fixtures/wallet";
@@ -37,61 +37,9 @@ vi.mock("@/src/integrations/jupiter/client", async (importOriginal) => ({
   getJupiterClient: () => client,
 }));
 
-// JWT-shaped placeholders, not real tokens.
-const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0LW5vdC1yZWFsIn0.c2lnbmF0dXJlLW5vdC1yZWFs";
-const VAULT = "7nE9GJoYHNmtaQvTQpota3KV2oz4pQ2dA6nvYK8EUJHV";
-const CHALLENGE = "Sign this message to authenticate with Jupiter.\n\n  Exact  whitespace\tmatters.  ";
-
-let craftSequence = 0;
-
-/** In-memory Jupiter double. Records every call; never touches the network. */
-class FakeJupiter implements JupiterClient {
-  readonly hasApiKey = true;
-  calls: string[] = [];
-  vaultOwner: string | null = null;
-  vaultRegistered = false;
-  unauthorized = false;
-  craftDelayMs = 0;
-  craftFailure: Error | null = null;
-  craftCount = 0;
-  findTokenByMint = async () => null;
-  quoteRoute = async () => {
-    throw new Error("not used");
-  };
-  async requestAuthChallenge(walletPubkey: string, type: "message" | "transaction") {
-    this.calls.push(`challenge:${walletPubkey}:${type}`);
-    return { type: "message" as const, challenge: CHALLENGE };
-  }
-  async verifyAuth(walletPubkey: string, signature: string) {
-    this.calls.push(`verify:${walletPubkey}:${signature}`);
-    this.vaultOwner = walletPubkey;
-    return JWT;
-  }
-  async getVault(jwt: string) {
-    this.calls.push(`vault:${jwt === JWT}`);
-    if (this.unauthorized) throw new JupiterRequestError("unauthorized", 401);
-    return this.vaultRegistered && this.vaultOwner ? { userPubkey: this.vaultOwner, vaultPubkey: VAULT } : null;
-  }
-  async registerVault() {
-    this.calls.push("register");
-    if (this.unauthorized) throw new JupiterRequestError("unauthorized", 401);
-    const created = !this.vaultRegistered;
-    this.vaultRegistered = true;
-    return { vault: { userPubkey: this.vaultOwner!, vaultPubkey: VAULT }, created };
-  }
-  async craftDeposit(_jwt: string, request: DepositCraftRequest) {
-    this.craftCount += 1;
-    this.calls.push(`craft:${request.amount}`);
-    if (this.craftDelayMs) await new Promise((resolve) => setTimeout(resolve, this.craftDelayMs));
-    if (this.craftFailure) throw this.craftFailure;
-    return {
-      ...f.depositCraftFixture,
-      requestId: `req-${++craftSequence}-not-real`,
-      mint: request.inputMint,
-      amount: request.amount,
-    };
-  }
-}
+const JWT = TEST_JWT;
+const VAULT = TEST_VAULT;
+const CHALLENGE = TEST_CHALLENGE;
 
 const routes = {
   challenge: (await import("@/app/api/jupiter/auth/challenge/route")).POST,
@@ -118,7 +66,14 @@ const GATE_PASSING = {
     levels: Object.fromEntries(JUPITER_VERIFICATION_LEVELS.map((level) => [level, { result: "NOT_TESTED", detail: "fixture" }])),
     sides: { BUY: { result: "PASSED", detail: "fixture" }, SELL: { result: "RESTRICTED", detail: "fixture" } },
   },
-  executionPriceCalibration: { status: "CALIBRATED", detail: "fixture only" },
+  referenceBasis: {
+    status: "RESOLVED",
+    policyReference: "Pyth Equity.US.AAPL/USD",
+    executionMonitor: "Jupiter AAPLx/USD",
+    triggerMapping: "IDENTITY",
+    disclosure: "AAPLx is a secondary-market token and may trade at a premium or discount to underlying AAPL.",
+    detail: "fixture only",
+  },
   verification: { pythLiveCheck: { status: "PASSED" } },
 };
 
@@ -164,7 +119,7 @@ beforeAll(async () => {
         metadata: {
           ...(base.metadata as object),
           ...GATE_PASSING,
-          executionPriceCalibration: { status: "REQUIRED", detail: "production state" },
+          referenceBasis: { ...GATE_PASSING.referenceBasis, status: "UNRESOLVED" },
           verification: { pythLiveCheck: { status: "NOT_ENTITLED" } },
         },
       }),
@@ -267,6 +222,10 @@ describe("Jupiter authentication routes", () => {
 describe("Jupiter deposit preparation", () => {
   const preparations = (policyId: string) =>
     testDb.db.select().from(jupiterDepositPreparations).where(eq(jupiterDepositPreparations.policyId, policyId));
+  beforeEach(() => {
+    client.vaultOwner = owner.address;
+    client.vaultRegistered = true;
+  });
 
   it("requires Jupiter auth and policy ownership", async () => {
     const id = await draft(readyAssetId);
@@ -293,7 +252,7 @@ describe("Jupiter deposit preparation", () => {
     expect(client.craftCount).toBe(0);
   });
 
-  it("enforces the calibration blocker even when Pyth has passed", async () => {
+  it("enforces the reference-basis gate even when Pyth has passed", async () => {
     const calibrationOnly = (
       await upsertAsset(
         testDb.db,
@@ -301,7 +260,7 @@ describe("Jupiter deposit preparation", () => {
           metadata: {
             ...(fakeCatalogAsset().metadata as object),
             ...GATE_PASSING,
-            executionPriceCalibration: { status: "REQUIRED", detail: "not calibrated" },
+            referenceBasis: { ...GATE_PASSING.referenceBasis, status: "UNRESOLVED" },
           },
         }),
       )
@@ -309,7 +268,7 @@ describe("Jupiter deposit preparation", () => {
     const id = await draft(calibrationOnly);
     await expect(
       prepareJupiterDeposit(testDb.db, { wallet: owner, policyId: id, jwt: JWT, mode: "live", now: LIFECYCLE_NOW }, { client }),
-    ).rejects.toMatchObject({ code: "ASSET_DISABLED", cause: "EXECUTION_PRICE_CALIBRATION_REQUIRED" });
+    ).rejects.toMatchObject({ code: "ASSET_DISABLED", cause: "REFERENCE_BASIS_UNRESOLVED" });
     expect(client.craftCount).toBe(0);
   });
 
@@ -332,11 +291,11 @@ describe("Jupiter deposit preparation", () => {
     const id = await draft(readyAssetId);
     const prepared = await prepareJupiterDeposit(testDb.db, { wallet: owner, policyId: id, jwt: JWT, mode: "live", now: LIFECYCLE_NOW }, { client });
     expect(prepared.reused).toBe(false);
-    expect(prepared.unsignedTransaction).toBe(f.depositCraftFixture.transaction);
+    expect(prepared.unsignedTransaction).toMatch(/^[A-Za-z0-9+/]+=*$/);
     const [row] = await preparations(id);
     expect(row).toMatchObject({ status: "CRAFTED", depositRequestId: expect.stringMatching(/^req-\d+-not-real$/), inputAmountAtomic: 25_000_000n });
     expect(prepared.preparation.depositRequestId).toBe(row!.depositRequestId);
-    expect(client.calls).toEqual(["craft:25000000"]);
+    expect(client.calls).toEqual(["vault:true", "craft:25000000"]);
 
     const again = await prepareJupiterDeposit(testDb.db, { wallet: owner, policyId: id, jwt: JWT, mode: "live", now: LIFECYCLE_NOW }, { client });
     expect(again).toMatchObject({ reused: true, preparation: { id: row!.id, depositRequestId: row!.depositRequestId } });
@@ -389,7 +348,7 @@ describe("Jupiter deposit preparation", () => {
       policyId: id,
       walletId: owner.id,
       status: "PREPARING",
-      inputMint: f.USDC_MINT,
+      inputMint: USDC.mintAddress,
       outputMint: "x",
       inputAmountAtomic: 1n,
       createdAt: stale,

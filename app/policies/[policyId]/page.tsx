@@ -2,21 +2,27 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { formatSession, formatUtc } from "@/components/asset/format";
+import { LiveOrderPanel } from "@/components/policy/live-order-panel";
 import { PolicyActions } from "@/components/policy/policy-actions";
+import { SolscanLink } from "@/components/policy/solscan-link";
 import { Card } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { POLICY_STATUS_TONE, StatusChip } from "@/components/ui/status-chip";
 import { shortAddress } from "@/components/wallet/short-address";
 import { WalletSignInPanel } from "@/components/wallet/wallet-sign-in-panel";
 import { getAuthenticatedWallet } from "@/src/auth/current-wallet";
+import { USDC } from "@/src/config/tokens";
+import { readJupiterJwt } from "@/src/auth/jupiter-session";
 import { getDb } from "@/src/db/client";
-import { formatUsd } from "@/src/domain/money";
+import { formatUsd, fromAtomicUnits } from "@/src/domain/money";
 import { describeSlippage } from "@/src/domain/policy";
 import { toAppError } from "@/src/domain/errors";
+import { getJupiterClient } from "@/src/integrations/jupiter/client";
 import { getExecutionMode, getExecutionProvider } from "@/src/integrations/jupiter/provider";
 import { logger } from "@/src/observability/logger";
+import { liveReadinessForPolicy, type LiveReadiness } from "@/src/services/jupiter/live-gates";
+import { reconcileForMode } from "@/src/services/jupiter/reconcile-live";
 import { getPolicyViewForWallet } from "@/src/services/policy-view";
-import { reconcilePolicy } from "@/src/services/reconcile-policy";
 
 export const metadata: Metadata = { title: "Policy" };
 
@@ -37,6 +43,15 @@ const EVENT_LABELS: Record<string, string> = {
   POLICY_CANCELLED: "Policy CANCELLED",
   POLICY_EXPIRED: "Policy EXPIRED",
   POLICY_FAILED: "Policy FAILED",
+  JUPITER_DEPOSIT_PREPARED: "Jupiter deposit prepared (unsigned)",
+  DEPOSIT_SIGNED: "Deposit signed by your wallet",
+  PROVIDER_SUBMISSION_UNCONFIRMED: "Jupiter did not confirm the order yet",
+  PROVIDER_ORDER_RECOVERED: "Jupiter order recovered from history",
+  PROVIDER_ORDER_AMBIGUOUS: "Several Jupiter orders match; nothing guessed",
+  PROVIDER_STATE_CHANGED: "Jupiter order state changed",
+  PROVIDER_CANCEL_INITIATED: "Jupiter stopped the order (withdrawal pending)",
+  WITHDRAWAL_SIGNED: "Withdrawal signed by your wallet",
+  FUNDS_WITHDRAWN: "Funds withdrawn from Jupiter vault",
 };
 
 const SOURCE_LABELS: Record<string, string> = { MOCK_PROVIDER: "MOCK PROVIDER" };
@@ -76,17 +91,32 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
   let result = await getPolicyViewForWallet(db, { walletId: wallet.id, policyId });
   if (!result) notFound();
 
-  // Reconcile armed policies on page load (CIRCUIT_ARCHITECTURE.md §14), only with the provider that armed them.
-  if (result.policy.status === "ARMED" && result.policy.simulated === (mode === "mock")) {
+  const livePolicy = !result.policy.simulated && result.policy.status !== "DRAFT";
+  const jupiterJwt = mode === "live" ? await readJupiterJwt(wallet.address) : null;
+
+  // Reconcile on page load (CIRCUIT_ARCHITECTURE.md §14), only with the provider that armed the policy.
+  // Read-only: it never signs or submits anything. Live policies need the user's Jupiter session.
+  const reconcilable =
+    (result.policy.simulated && mode === "mock" && result.policy.status === "ARMED") ||
+    (livePolicy && mode === "live" && jupiterJwt !== null && ["ARMING", "ARMED", "EXPIRED"].includes(result.policy.status));
+  if (reconcilable) {
     try {
-      const reconciled = await reconcilePolicy(db, { wallet, policyId }, { provider: getExecutionProvider(db, mode) });
+      const reconciled = await reconcileForMode(
+        db,
+        { wallet, policyId, jwt: jupiterJwt, mode },
+        { provider: getExecutionProvider(db, mode), client: getJupiterClient() },
+      );
       if (reconciled.changed) result = (await getPolicyViewForWallet(db, { walletId: wallet.id, policyId })) ?? result;
     } catch (error) {
       const appError = toAppError(error);
       logger.warn("reconcile.page_load_failed", { policyId, code: appError.code });
     }
   }
-  const { policy, events, execution } = result;
+  const useLivePanel = mode === "live" && !result.policy.simulated;
+  let readiness: LiveReadiness | null = null;
+  if (useLivePanel) readiness = await liveReadinessForPolicy(db, { walletId: wallet.id, policyId });
+  const { policy, events, execution, live } = result;
+  const onchain = execution?.evidenceSource === "ONCHAIN" ? execution : null;
   const relative = policy.expressionType === "RELATIVE_PERCENT";
 
   return (
@@ -197,21 +227,92 @@ export default async function PolicyPage({ params }: PageProps<"/policies/[polic
               )}
             </dl>
 
+            {!policy.simulated && live && (
+              <dl className="mt-1">
+                {policy.providerState && <Row term="Jupiter state">{policy.providerState.replace("_", " ")}</Row>}
+                <Row term="Monitored price" sub="Jupiter trigger engine">
+                  {policy.asset.symbol}/USD
+                </Row>
+                {live.depositTxSignature && (
+                  <Row term="Deposit">
+                    <SolscanLink signature={live.depositTxSignature} />
+                  </Row>
+                )}
+                {live.withdrawalTxSignature && (
+                  <Row term="Withdrawal">
+                    <SolscanLink signature={live.withdrawalTxSignature} />
+                  </Row>
+                )}
+              </dl>
+            )}
+
+            {policy.status === "EXECUTED" && onchain && (
+              <div data-testid="onchain-evidence" className="mt-3 rounded-md border border-line p-3 text-xs">
+                <p className="font-semibold">EXECUTED · onchain evidence reported by Jupiter</p>
+                <dl className="mt-2">
+                  <Row term="Input used" sub={`${onchain.inputAmountAtomic} atomic`}>
+                    {fromAtomicUnits(BigInt(onchain.inputAmountAtomic), USDC.decimals)} {USDC.symbol}
+                  </Row>
+                  {onchain.outputAmountAtomic && (
+                    <Row term="Output received" sub="raw units; wallets may show a scaled amount">
+                      {fromAtomicUnits(BigInt(onchain.outputAmountAtomic), policy.asset.decimals)} {policy.asset.symbol}
+                    </Row>
+                  )}
+                  {onchain.fillSignatures.map((signature, index) => (
+                    <Row key={signature} term={onchain.fillSignatures.length > 1 ? `Fill ${index + 1}` : "Fill"}>
+                      <SolscanLink signature={signature} />
+                    </Row>
+                  ))}
+                </dl>
+              </div>
+            )}
+
             {policy.status === "EXECUTED" && execution?.evidenceSource === "SIMULATED" && (
               <p data-testid="simulated-evidence" className="mt-3 rounded-md border border-dashed border-line-strong p-3 text-xs leading-relaxed text-muted">
                 The simulated provider reported this order FILLED at {formatUtc(execution.executedAt, true)}. No Solana
                 transaction evidence exists for this simulated fill, and no funds moved.
               </p>
             )}
-            {policy.status === "CANCELLED" && (
-              <p className="mt-3 text-xs text-muted">Cancellation confirmed by the {policy.simulated ? "simulated " : ""}provider.</p>
+            {policy.simulated && policy.status === "CANCELLED" && (
+              <p className="mt-3 text-xs text-muted">Cancellation confirmed by the simulated provider.</p>
             )}
-            {policy.status === "EXPIRED" && (
-              <p className="mt-3 text-xs text-muted">The {policy.simulated ? "simulated " : ""}order expired without filling.</p>
+            {policy.simulated && policy.status === "EXPIRED" && (
+              <p className="mt-3 text-xs text-muted">The simulated order expired without filling.</p>
+            )}
+            {mode === "live" && !policy.simulated && !jupiterJwt && policy.status !== "DRAFT" && (
+              <p className="mt-3 text-xs text-warning">Connect Jupiter on the dashboard to refresh this order&apos;s status.</p>
             )}
 
             <div className="mt-4">
-              <PolicyActions policyId={policy.id} status={policy.status} mode={mode} simulated={policy.simulated} />
+              {useLivePanel && readiness ? (
+                <LiveOrderPanel
+                  policyId={policy.id}
+                  sessionWallet={wallet.address}
+                  status={policy.status}
+                  providerOrderId={policy.providerOrderId}
+                  providerState={policy.providerState}
+                  providerProgress={policy.providerProgress}
+                  readiness={{ ready: readiness.ready, message: readiness.ready ? null : readiness.message }}
+                  jupiterConnected={jupiterJwt !== null}
+                  review={{
+                    assetSymbol: policy.asset.symbol,
+                    amountDisplay: policy.amount.display,
+                    amountSymbol: policy.amount.symbol,
+                    referenceSymbol: policy.reference?.symbol ?? null,
+                    referenceUsd: policy.reference?.priceUsd ?? null,
+                    compiledTriggerUsd: policy.compiledTriggerUsd,
+                    direction: policy.triggerDirection,
+                    slippageBps: policy.maxSlippageBps,
+                    expiresAt: policy.expiresAt,
+                    policyReference: readiness.referenceBasis?.policyReference ?? null,
+                    executionMonitor: readiness.referenceBasis?.executionMonitor ?? null,
+                    disclosure: readiness.referenceBasis?.disclosure ?? null,
+                  }}
+                  live={live ? { depositPreparationId: live.depositPreparationId, depositTxSignature: live.depositTxSignature, pendingWithdrawal: live.pendingWithdrawal } : null}
+                />
+              ) : (
+                <PolicyActions policyId={policy.id} status={policy.status} mode={mode} simulated={policy.simulated} />
+              )}
             </div>
           </Card>
         </div>

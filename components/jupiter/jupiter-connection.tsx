@@ -303,7 +303,8 @@ export function JupiterConnectionView({
 
       {view.kind === "vault_ready" && (
         <p className="mt-4 text-[13px] text-muted">
-          Live deposit signing not enabled yet. Circuit does not ask your wallet to sign any deposit or order in this build.
+          Vault ready. Live deposits are authorized per policy on its page, only after you review the order and sign the deposit
+          in your wallet.
         </p>
       )}
 

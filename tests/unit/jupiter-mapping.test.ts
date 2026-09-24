@@ -12,6 +12,9 @@ import {
   type CompiledPolicyForJupiter,
 } from "@/src/integrations/jupiter/trigger";
 import { createSinglePriceOrderRequestSchema, depositCraftRequestSchema } from "@/src/integrations/jupiter/schemas";
+import { readFileSync } from "node:fs";
+import { VERIFIED_ASSETS } from "@/src/config/assets";
+import { LIVE_PROVIDER_STATES, policyStatusForLiveProviderState } from "@/src/domain/policy";
 import { AAPLX_MINT, FAKE_WALLET, USDC_MINT } from "../fixtures/jupiter";
 
 const NOW = new Date("2026-09-23T12:00:00.000Z");
@@ -114,9 +117,79 @@ describe("provider minimum and states", () => {
   });
 
   it("maps documented order states and never guesses unknown ones", () => {
-    expect(["open", "filled", "cancelled", "expired", "failed"].map(normalizeJupiterOrderState)).toEqual(["OPEN", "FILLED", "CANCELLED", "EXPIRED", "FAILED"]);
-    expect(["pending", "executing", "pending_withdraw"].map(normalizeJupiterOrderState)).toEqual(["IN_PROGRESS", "IN_PROGRESS", "IN_PROGRESS"]);
+    const states = ["pending", "open", "executing", "filled", "pending_withdraw", "cancelled", "expired", "failed"];
+    expect(states.map(normalizeJupiterOrderState)).toEqual(["PENDING", "OPEN", "EXECUTING", "FILLED", "PENDING_WITHDRAW", "CANCELLED", "EXPIRED", "FAILED"]);
     expect(normalizeJupiterOrderState("fill_success")).toBe("UNKNOWN"); // a rawState, not an orderState
+    expect(normalizeJupiterOrderState("partial_fill_success")).toBe("UNKNOWN");
     expect(normalizeJupiterOrderState("something_new")).toBe("UNKNOWN");
+  });
+
+  it("maps provider states to Circuit statuses without inventing transitions", () => {
+    expect(LIVE_PROVIDER_STATES.map((state) => [state, policyStatusForLiveProviderState(state)])).toEqual([
+      ["PENDING", "ARMING"],
+      ["OPEN", "ARMED"],
+      ["EXECUTING", "ARMED"],
+      ["FILLED", "EXECUTED"],
+      ["PENDING_WITHDRAW", "ARMED"],
+      ["CANCELLED", "CANCELLED"],
+      ["EXPIRED", "EXPIRED"],
+      ["FAILED", "FAILED"],
+    ]);
+  });
+});
+
+describe("price number boundary", () => {
+  it.each([
+    ["194.00", 194],
+    ["194", 194],
+    ["181.50", 181.5],
+    ["0.01", 0.01],
+    ["336.44", 336.44],
+    ["123456789012.34", 123456789012.34],
+  ])("%s → %s exactly", (decimal, expected) => {
+    expect(toProviderPriceNumber(decimal)).toBe(expected);
+    expect(JSON.stringify({ triggerPriceUsd: toProviderPriceNumber(decimal) })).toBe(`{"triggerPriceUsd":${expected}}`);
+  });
+
+  it("refuses values a JSON number cannot carry exactly", () => {
+    for (const bad of ["12345678901234.567", "0.00", "NaN", "Infinity", " 194", "194.0.0"]) {
+      expect(() => toProviderPriceNumber(bad), bad).toThrow(JupiterMappingError);
+    }
+  });
+});
+
+describe("reference basis (Pyth AAPL → Jupiter AAPLx)", () => {
+  it("sends the compiled target unchanged: 194.00 → triggerPriceUsd 194, never scaled", () => {
+    const intent = toJupiterSinglePriceOrderIntent(policy("BUY", "BELOW", { compiledTriggerUsd: "194.00" }), mints);
+    expect(intent.triggerPriceUsd).toBe(194);
+    const multiplier = 1.0032690125398187; // AAPLx ScaledUiAmount multiplier (display-only)
+    expect(intent.triggerPriceUsd).not.toBe(194 * multiplier);
+    expect(intent.triggerPriceUsd).not.toBe(194 / multiplier);
+    expect(intent.triggerMint).toBe(AAPLX_MINT);
+  });
+
+  it("keeps the raw atomic input amount as the transaction representation", () => {
+    const intent = toJupiterSinglePriceOrderIntent(policy("BUY", "ABOVE", { inputAmountAtomic: 25_000_000n }), mints);
+    expect(intent.inputAmount).toBe("25000000");
+  });
+
+  it("records the AAPLx decision: identity mapping, Pyth reference, Jupiter AAPLx monitor, premium/discount disclosure", () => {
+    const aaplx = VERIFIED_ASSETS.find((asset) => asset.symbol === "AAPLx")!;
+    expect(aaplx.referenceBasis).toMatchObject({ status: "RESOLVED", triggerMapping: "IDENTITY" });
+    expect(aaplx.referenceBasis.policyReference).toMatch(/Pyth Equity\.US\.AAPL\/USD/);
+    expect(aaplx.referenceBasis.executionMonitor).toMatch(/Jupiter Trigger monitors AAPLx\/USD/);
+    expect(aaplx.referenceBasis.disclosure).toMatch(/premium or discount to underlying AAPL/);
+    // The Pyth gate is untouched: production stays blocked.
+    expect(aaplx.verification.pythLiveCheck.status).toBe("NOT_ENTITLED");
+  });
+
+  it("no source path applies the ScaledUiAmount multiplier to a price or claims Pyth controls Jupiter", () => {
+    const files = ["src/integrations/jupiter/trigger.ts", "src/services/jupiter/arm-live.ts", "src/services/jupiter/live-orders.ts", "src/services/jupiter/prepare-deposit.ts"];
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      expect(`${file}: ${/multiplier\s*[*/]|[*/]\s*multiplier/i.test(code)}`).toBe(`${file}: false`);
+      expect(`${file}: ${/pyth (controls|enforces|triggers)/i.test(source)}`).toBe(`${file}: false`);
+    }
   });
 });

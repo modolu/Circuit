@@ -3,16 +3,25 @@ import { getServerEnv } from "../../config/env.ts";
 import {
   authChallengeResponseSchema,
   authVerifyResponseSchema,
+  cancelInitiateResponseSchema,
+  confirmCancelResponseSchema,
+  createOrderResponseSchema,
   depositCraftResponseSchema,
   gatewayErrorSchema,
   swapQuoteResponseSchema,
   tokenInfoSchema,
+  orderHistoryResponseSchema,
   tokenSearchResponseSchema,
   triggerErrorSchema,
   vaultResponseSchema,
   type AuthChallengeResponse,
+  type CancelInitiateResponse,
+  type ConfirmCancelResponse,
+  type CreateOrderResponse,
+  type CreateSinglePriceOrderRequest,
   type DepositCraftRequest,
   type DepositCraftResponse,
+  type OrderHistoryResponse,
   type SwapQuote,
   type TokenInfo,
 } from "./schemas.ts";
@@ -22,7 +31,8 @@ import { JUPITER_API_BASE_URL, JUPITER_TRIGGER_PATH } from "./trigger.ts";
  * Server-side Jupiter HTTP client (Trigger V2 docs re-verified 2026-09-23).
  * - The API key goes only in the `x-api-key` header, never in errors or logs.
  * - The Trigger JWT is passed in per call (`Authorization: Bearer`) and never stored here.
- * - There is no order creation, cancellation or transaction submission (Task 9+).
+ * - Signed transactions are forwarded exactly as verified by the services (never logged).
+ *   Circuit never signs anything itself.
  */
 
 export type JupiterFailureReason =
@@ -59,6 +69,8 @@ export interface JupiterVault {
 }
 
 const REQUEST_TIMEOUT_MS = 10_000;
+/** Create and confirm-cancel land a transaction synchronously, so they get longer before timing out. */
+const LANDING_TIMEOUT_MS = 45_000;
 
 function scrub(message: string, secrets: Array<string | undefined>): string {
   let safe = message.slice(0, 300);
@@ -100,6 +112,24 @@ export interface JupiterClient {
   registerVault(jwt: string): Promise<{ vault: JupiterVault; created: boolean }>;
   /** Builds an UNSIGNED deposit transaction plus a single-use requestId. It moves no funds by itself. */
   craftDeposit(jwt: string, request: DepositCraftRequest): Promise<DepositCraftResponse>;
+  /**
+   * POST /orders/price: lands the signed deposit and creates the order. A timeout, network
+   * error or 5xx is AMBIGUOUS (the deposit may have landed); callers must not retry blindly.
+   */
+  createPriceOrder(jwt: string, request: CreateSinglePriceOrderRequest): Promise<CreateOrderResponse>;
+  /** GET /orders/history (paged). Price orders have no get-by-id. */
+  listOrderHistory(jwt: string, query: OrderHistoryQuery): Promise<OrderHistoryResponse>;
+  /** Step 1 of cancellation: stops fills, returns an UNSIGNED withdrawal transaction and cancelRequestId. */
+  initiatePriceOrderCancel(jwt: string, orderId: string): Promise<CancelInitiateResponse>;
+  /** Step 2: submits the wallet-signed withdrawal. Retry with the same cancelRequestId is documented. */
+  confirmPriceOrderCancel(jwt: string, orderId: string, body: { signedTransaction: string; cancelRequestId: string }): Promise<ConfirmCancelResponse>;
+}
+
+export interface OrderHistoryQuery {
+  state?: "active" | "past";
+  mint?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export function createJupiterClient({
@@ -116,7 +146,10 @@ export function createJupiterClient({
   const triggerUrl = (path: string) => new URL(`${triggerBaseUrl.replace(/\/$/, "")}${path}`);
 
   /** Sends one request. Returns status and parsed JSON body (or undefined); never throws for HTTP status. */
-  async function send(url: URL, { method = "GET", body, jwt }: { method?: string; body?: unknown; jwt?: string } = {}) {
+  async function send(
+    url: URL,
+    { method = "GET", body, jwt, timeoutMs = REQUEST_TIMEOUT_MS }: { method?: string; body?: unknown; jwt?: string; timeoutMs?: number } = {},
+  ) {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (apiKey) headers["x-api-key"] = apiKey;
@@ -128,7 +161,7 @@ export function createJupiterClient({
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: "no-store",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
@@ -238,6 +271,42 @@ export function createJupiterClient({
       const result = await send(triggerUrl("/deposit/craft"), { method: "POST", body: request, jwt });
       if (!result.ok) throw failure(result);
       return parse(depositCraftResponseSchema, result.json, result.status);
+    },
+
+    async createPriceOrder(jwt, request) {
+      const result = await send(triggerUrl("/orders/price"), { method: "POST", body: request, jwt, timeoutMs: LANDING_TIMEOUT_MS });
+      if (!result.ok) throw failure(result);
+      return parse(createOrderResponseSchema, result.json, result.status);
+    },
+
+    async listOrderHistory(jwt, { state, mint, limit = 100, offset = 0 }) {
+      const url = triggerUrl("/orders/history");
+      if (state) url.searchParams.set("state", state);
+      if (mint) url.searchParams.set("mint", mint);
+      url.searchParams.set("limit", String(limit));
+      url.searchParams.set("offset", String(offset));
+      url.searchParams.set("sort", "created_at");
+      url.searchParams.set("dir", "desc");
+      const result = await send(url, { jwt });
+      if (!result.ok) throw failure(result);
+      return parse(orderHistoryResponseSchema, result.json, result.status);
+    },
+
+    async initiatePriceOrderCancel(jwt, orderId) {
+      const result = await send(triggerUrl(`/orders/price/cancel/${encodeURIComponent(orderId)}`), { method: "POST", jwt });
+      if (!result.ok) throw failure(result);
+      return parse(cancelInitiateResponseSchema, result.json, result.status);
+    },
+
+    async confirmPriceOrderCancel(jwt, orderId, body) {
+      const result = await send(triggerUrl(`/orders/price/confirm-cancel/${encodeURIComponent(orderId)}`), {
+        method: "POST",
+        body,
+        jwt,
+        timeoutMs: LANDING_TIMEOUT_MS,
+      });
+      if (!result.ok) throw failure(result);
+      return parse(confirmCancelResponseSchema, result.json, result.status);
     },
   };
 }

@@ -4,6 +4,8 @@ import { USDC } from "../config/tokens.ts";
 import type { DbExecutor } from "../db/client.ts";
 import { findAssetById } from "../db/repositories/assets.ts";
 import { findExecutionByPolicyId } from "../db/repositories/executions.ts";
+import { findActiveCancelPreparation, findLatestConfirmedCancelPreparation } from "../db/repositories/jupiter-cancel-preparations.ts";
+import { findSubmittedDepositPreparation } from "../db/repositories/jupiter-deposit-preparations.ts";
 import { findPolicyForWallet, listPoliciesForWallet, listPolicyEvents } from "../db/repositories/policies.ts";
 import type { Execution, Policy, PolicyEvent } from "../db/schema.ts";
 import { fromAtomicUnits } from "../domain/money.ts";
@@ -53,6 +55,21 @@ export interface PolicyView {
   executedAt: string | null;
   cancelledAt: string | null;
   failure: { code: string; message: string | null } | null;
+  /** Live Jupiter display state (e.g. EXECUTING, PENDING_WITHDRAW); null for drafts and simulated policies. */
+  providerState: Policy["providerState"];
+  /** Provider-reported progress only (strings). */
+  providerProgress: { inputUsed: string | null; outputAmount: string | null; fillPercent: string | null; rawState: string | null } | null;
+}
+
+/** Live Jupiter evidence and pending steps for one policy (real signatures only). */
+export interface LiveOrderDetails {
+  depositPreparationId: string | null;
+  depositTxSignature: string | null;
+  vaultAddress: string | null;
+  /** A withdrawal prepared but not yet confirmed: the user still has to sign/confirm it. */
+  pendingWithdrawal: { id: string; purpose: "CANCEL" | "WITHDRAW_EXPIRED"; status: "PREPARED" | "SUBMITTING"; submitted: boolean } | null;
+  withdrawalTxSignature: string | null;
+  fillSignatures: string[];
 }
 
 export interface ExecutionView {
@@ -63,7 +80,13 @@ export interface ExecutionView {
   inputAmountAtomic: string;
   outputAmountAtomic: string | null;
   executedAt: string;
+  /** Every provider-reported fill signature (ONCHAIN only), oldest first. */
+  fillSignatures: string[];
 }
+
+const fillJsonSchema = z.object({
+  fills: z.array(z.object({ txSignature: z.string().nullable(), state: z.string().nullable() })).default([]),
+});
 
 export function toExecutionView(execution: Execution): ExecutionView {
   return {
@@ -73,8 +96,22 @@ export function toExecutionView(execution: Execution): ExecutionView {
     inputAmountAtomic: execution.inputAmountAtomic.toString(),
     outputAmountAtomic: execution.outputAmountAtomic?.toString() ?? null,
     executedAt: execution.executedAt.toISOString(),
+    fillSignatures:
+      execution.evidenceSource === "ONCHAIN"
+        ? (fillJsonSchema.safeParse(execution.fillJson).data?.fills ?? [])
+            .filter((fill) => fill.state !== "failed" && fill.state !== "pending")
+            .flatMap((fill) => (fill.txSignature ? [fill.txSignature] : []))
+        : [],
   };
 }
+
+const nullableString = z.string().nullable().catch(null).default(null);
+const progressSchema = z.object({
+  inputUsed: nullableString,
+  outputAmount: nullableString,
+  fillPercent: nullableString,
+  rawState: nullableString,
+});
 
 export interface PolicyEventView {
   id: string;
@@ -112,6 +149,8 @@ export function toPolicyView(policy: Policy, asset: PolicyAssetSummary): PolicyV
     executedAt: policy.executedAt?.toISOString() ?? null,
     cancelledAt: policy.cancelledAt?.toISOString() ?? null,
     failure: policy.failureCode ? { code: policy.failureCode, message: policy.failureMessage } : null,
+    providerState: policy.providerState,
+    providerProgress: progressSchema.safeParse(policy.providerProgressJson).data ?? null,
     summary: describePolicy({
       side: policy.side,
       direction: policy.triggerDirection,
@@ -155,17 +194,35 @@ async function assetSummary(db: DbExecutor, assetId: string): Promise<PolicyAsse
 export async function getPolicyViewForWallet(
   db: DbExecutor,
   { walletId, policyId }: { walletId: string; policyId: string },
-): Promise<{ policy: PolicyView; events: PolicyEventView[]; execution: ExecutionView | null } | null> {
+): Promise<{ policy: PolicyView; events: PolicyEventView[]; execution: ExecutionView | null; live: LiveOrderDetails | null } | null> {
   const policy = await findPolicyForWallet(db, { policyId, walletId });
   if (!policy) return null;
   const asset = await assetSummary(db, policy.assetId);
   if (!asset) return null;
   const events = await listPolicyEvents(db, policy.id);
   const execution = await findExecutionByPolicyId(db, policy.id);
+  const executionView = execution ? toExecutionView(execution) : null;
   return {
     policy: toPolicyView(policy, asset),
     events: events.map(toPolicyEventView),
-    execution: execution ? toExecutionView(execution) : null,
+    execution: executionView,
+    live: isSimulatedProvider(policy.provider) || policy.status === "DRAFT" ? null : await liveOrderDetails(db, policy.id, executionView),
+  };
+}
+
+async function liveOrderDetails(db: DbExecutor, policyId: string, execution: ExecutionView | null): Promise<LiveOrderDetails> {
+  const deposit = await findSubmittedDepositPreparation(db, policyId);
+  const pending = await findActiveCancelPreparation(db, policyId);
+  const confirmed = await findLatestConfirmedCancelPreparation(db, policyId);
+  return {
+    depositPreparationId: deposit?.id ?? null,
+    depositTxSignature: deposit?.depositTxSignature ?? null,
+    vaultAddress: deposit?.receiverAddress ?? null,
+    pendingWithdrawal: pending
+      ? { id: pending.id, purpose: pending.purpose, status: pending.status as "PREPARED" | "SUBMITTING", submitted: pending.status === "SUBMITTING" }
+      : null,
+    withdrawalTxSignature: confirmed?.withdrawalTxSignature ?? null,
+    fillSignatures: execution?.fillSignatures ?? [],
   };
 }
 

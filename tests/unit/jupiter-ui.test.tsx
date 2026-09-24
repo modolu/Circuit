@@ -98,7 +98,7 @@ describe("JupiterConnection", () => {
     expect(noVault.t).not.toContain("Connect Jupiter");
     const ready = render({ view: { kind: "vault_ready", vaultPubkey: OTHER }, wallet: { kind: "ready" } });
     expect(ready.t).toContain("VAULT READY");
-    expect(ready.t).toContain("Live deposit signing not enabled yet");
+    expect(ready.t).toContain("Live deposits are authorized per policy on its page");
     expect(button(ready.html, "Disconnect Jupiter")).not.toBeNull();
   });
 
@@ -110,29 +110,61 @@ describe("JupiterConnection", () => {
   });
 });
 
-/** Files that make up the Task 8 Jupiter surface. None may sign transactions or keep the JWT in browser storage. */
-function sources(): Array<{ path: string; source: string }> {
-  const dirs = ["components/jupiter", "src/services/jupiter", "app/api/jupiter"];
-  const files = ["src/auth/jupiter-session.ts", "app/api/_lib/jupiter-route.ts", "app/api/policies/[policyId]/jupiter/deposit/route.ts"];
-  const walk = (dir: string): string[] =>
-    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
-      entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)],
-    );
-  return [...dirs.flatMap(walk), ...files].map((path) => ({ path, source: readFileSync(path, "utf8") }));
+const walk = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]));
+const read = (paths: string[]) => paths.map((path) => ({ path, source: readFileSync(path, "utf8") }));
+
+/** Server-side Jupiter surface (Tasks 8–9). The server verifies and forwards; it never signs. */
+function serverSources() {
+  return read([
+    ...walk("src/services/jupiter"),
+    ...walk("app/api/jupiter"),
+    ...walk("app/api/policies/[policyId]/jupiter"),
+    "src/auth/jupiter-session.ts",
+    "app/api/_lib/jupiter-route.ts",
+    "src/integrations/jupiter/client.ts",
+    "src/integrations/jupiter/signed-transaction.ts",
+  ]);
 }
 
-describe("Task 8 boundary", () => {
-  it("never signs or sends a transaction, calls /orders/price, or uses browser storage", () => {
-    for (const { path, source } of sources()) {
-      for (const forbidden of [/signTransaction/, /signAllTransactions/, /sendTransaction/, /sendRawTransaction/, /orders\/price/, /localStorage/, /sessionStorage/]) {
+/** Browser-side Jupiter surface. */
+function clientSources() {
+  return read([...walk("components/jupiter"), "components/policy/live-order-panel.tsx", "components/policy/wallet-transaction.ts", "components/policy/policy-actions.tsx"]);
+}
+
+describe("live money boundary (Tasks 8–9)", () => {
+  it("the server never signs, sends or holds keys, and never uses browser storage", () => {
+    for (const { path, source } of serverSources()) {
+      for (const forbidden of [/\.signTransaction\(/, /signAllTransactions/, /sendTransaction/, /sendRawTransaction/, /Keypair/, /secretKey/, /\.sign\(\[/, /localStorage/, /sessionStorage/]) {
         expect(`${path}: ${forbidden.test(source)}`).toBe(`${path}: false`);
       }
     }
   });
 
-  it("keeps the Jupiter API key server-side", () => {
-    for (const { path, source } of sources().filter((s) => s.path.startsWith("components/"))) {
-      expect(`${path}: ${/JUPITER_API_KEY|x-api-key/.test(source)}`).toBe(`${path}: false`);
+  it("the browser signs only on the two explicit actions and never auto-sends", () => {
+    for (const { path, source } of clientSources()) {
+      for (const forbidden of [/sendTransaction/, /sendRawTransaction/, /signAllTransactions/, /localStorage/, /sessionStorage/, /JUPITER_API_KEY|x-api-key/]) {
+        expect(`${path}: ${forbidden.test(source)}`).toBe(`${path}: false`);
+      }
+    }
+    const panel = readFileSync("components/policy/live-order-panel.tsx", "utf8");
+    // No effects that could fire a signature on load, refresh or reconcile.
+    expect(/useEffect/.test(panel)).toBe(false);
+    const calls = [...panel.matchAll(/signPreparedTransaction\(/g)].length;
+    expect(calls).toBe(2);
+    const authorize = panel.slice(panel.indexOf("const authorize = "), panel.indexOf("const resubmit = "));
+    const withdraw = panel.slice(panel.indexOf("const confirmWithdrawal = "), panel.indexOf("const retryWithdrawal = "));
+    expect(authorize).toContain("signPreparedTransaction(");
+    expect(withdraw).toContain("signPreparedTransaction(");
+    expect(panel).toMatch(/onClick=\{authorize\}/);
+    expect(panel).toMatch(/onClick=\{confirmWithdrawal\}/);
+    expect(readFileSync("components/jupiter/jupiter-connection.tsx", "utf8")).not.toMatch(/signTransaction/);
+  });
+
+  it("the safe live probe never crafts, creates, cancels or signs", () => {
+    const probe = readFileSync("tests/live/jupiter.live.test.ts", "utf8");
+    for (const forbidden of [/craftDeposit/, /createPriceOrder/, /initiatePriceOrderCancel/, /confirmPriceOrderCancel/, /registerVault/, /signTransaction/, /\.sign\(/]) {
+      expect(forbidden.test(probe)).toBe(false);
     }
   });
 });

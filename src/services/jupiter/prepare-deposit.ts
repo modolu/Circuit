@@ -1,21 +1,26 @@
 import "server-only";
 import { USDC } from "../../config/tokens.ts";
 import type { Database } from "../../db/client.ts";
-import { findAssetById } from "../../db/repositories/assets.ts";
 import {
   findActiveDepositPreparation,
   invalidateDepositPreparation,
   invalidateStaleReservation,
+  invalidateUnsubmittedCrafted,
   markDepositPreparationCrafted,
   reserveDepositPreparation,
 } from "../../db/repositories/jupiter-deposit-preparations.ts";
+import { appendPolicyEvent } from "../../db/repositories/policies.ts";
 import type { JupiterDepositPreparation, Wallet } from "../../db/schema.ts";
-import { assetMetadataSchema, liveBuyDepositGate } from "../../domain/asset.ts";
 import { AppError } from "../../domain/errors.ts";
+import { POLICY_EVENT_TYPES } from "../../domain/policy.ts";
 import type { JupiterClient } from "../../integrations/jupiter/client.ts";
-import { meetsProviderMinimum, toDepositCraftRequest } from "../../integrations/jupiter/trigger.ts";
+import { inspectUnsignedTransaction, SignedTransactionError } from "../../integrations/jupiter/signed-transaction.ts";
+import { toDepositCraftRequest } from "../../integrations/jupiter/trigger.ts";
 import { loadOwnedPolicy } from "../policy-lifecycle.ts";
 import { requireJupiterJwt, requireLiveMode, toJupiterAppError } from "./errors.ts";
+import { assertLiveBuyEligible } from "./live-gates.ts";
+
+export { LIVE_SELL_DISABLED_MESSAGE } from "./live-gates.ts";
 
 /*
  * Prepares (does NOT sign or submit) a live Jupiter BUY deposit for a DRAFT policy.
@@ -31,20 +36,20 @@ import { requireJupiterJwt, requireLiveMode, toJupiterAppError } from "./errors.
  * Concurrent callers hit the unique index and either receive the CRAFTED preparation
  * or a retryable "in progress" conflict. They never trigger a second craft.
  * A failed craft invalidates the reservation. Reservations abandoned by a crash are
- * reclaimed after STALE_RESERVATION_MS. There is no automatic re-craft loop.
+ * reclaimed after STALE_RESERVATION_MS.
+ *
+ * Freshness (Task 9): a crafted transaction carries a recent blockhash that expires
+ * within about a minute. An UNSUBMITTED CRAFTED preparation older than
+ * CRAFTED_REUSE_MS is released and re-crafted, so the wallet is never asked to sign a
+ * transaction that can no longer land. Once submission starts it is never re-crafted.
+ *
+ * Integrity (Task 9): the crafted transaction must deserialize, pay its fee from the
+ * user's wallet (so its transaction id is the wallet's signature), and deposit into the
+ * wallet's own Jupiter vault (receiverAddress == GET /vault).
  */
 
 export const STALE_RESERVATION_MS = 60_000;
-
-export const LIVE_SELL_DISABLED_MESSAGE =
-  "Live AAPLx sell orders are not enabled because the token's transfer-hook deposit path has not been verified with Jupiter Trigger.";
-
-const GATE_MESSAGES = {
-  PYTH_LIVE_CHECK_REQUIRED: "Live execution for this asset needs a verified live Pyth reference first.",
-  BUY_DEPOSIT_NOT_COMPATIBLE: "Jupiter Trigger deposits for this asset have not been verified as compatible.",
-  EXECUTION_PRICE_CALIBRATION_REQUIRED:
-    "Live execution for this asset is blocked until the Pyth reference → token execution-price calibration is complete.",
-} as const;
+export const CRAFTED_REUSE_MS = 30_000;
 
 export interface DepositPreparationView {
   id: string;
@@ -55,7 +60,10 @@ export interface DepositPreparationView {
   outputMint: string;
   inputAmountAtomic: string;
   receiverAddress: string | null;
+  depositTxSignature: string | null;
+  submitted: boolean;
   createdAt: string;
+  craftedAt: string;
 }
 
 export function toDepositPreparationView(row: JupiterDepositPreparation): DepositPreparationView {
@@ -68,7 +76,10 @@ export function toDepositPreparationView(row: JupiterDepositPreparation): Deposi
     outputMint: row.outputMint,
     inputAmountAtomic: row.inputAmountAtomic.toString(),
     receiverAddress: row.receiverAddress,
+    depositTxSignature: row.depositTxSignature,
+    submitted: row.submissionStartedAt !== null,
     createdAt: row.createdAt.toISOString(),
+    craftedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -101,22 +112,27 @@ export async function prepareJupiterDeposit(
   const policy = await loadOwnedPolicy(db, wallet.id, policyId);
   if (policy.status !== "DRAFT") throw new AppError("POLICY_STATE_CONFLICT", `A ${policy.status} policy cannot have a deposit prepared.`);
   if (policy.expiresAt.getTime() <= now.getTime()) throw new AppError("POLICY_EXPIRED", "This draft has passed its expiry.");
-  if (policy.side !== "BUY") throw new AppError("ASSET_DISABLED", LIVE_SELL_DISABLED_MESSAGE, { cause: "LIVE_SELL_NOT_VERIFIED" });
+  await assertLiveBuyEligible(db, policy);
 
-  const asset = await findAssetById(db, policy.assetId);
-  if (!asset?.active) throw new AppError("ASSET_DISABLED", "This asset is not currently available in Circuit.");
-  const metadata = assetMetadataSchema.safeParse(asset.metadata);
-  if (!metadata.success) throw new AppError("ASSET_DISABLED", GATE_MESSAGES.BUY_DEPOSIT_NOT_COMPATIBLE, { cause: "ASSET_METADATA_INVALID" });
-  const gate = liveBuyDepositGate(metadata.data);
-  if (!gate.ok) throw new AppError("ASSET_DISABLED", GATE_MESSAGES[gate.reason], { cause: gate.reason });
-
-  if (policy.inputMint !== USDC.mintAddress || policy.outputMint !== asset.mintAddress) {
-    throw new AppError("ASSET_DISABLED", "Live Jupiter deposits support USDC → verified stock token only.", { cause: "UNEXPECTED_MINTS" });
+  // The deposit goes into the wallet's own Jupiter vault; there is none until the user sets it up.
+  let vault;
+  try {
+    vault = await client.getVault(token);
+  } catch (error) {
+    throw toJupiterAppError(error, "vault");
   }
-  // USDC is valued at 1 USD here. Jupiter values the deposit at market price, so a live
-  // demo should use a small margin above the floor (not hard-coded here).
-  if (!meetsProviderMinimum({ inputAmountAtomic: policy.amountAtomic, inputDecimals: USDC.decimals, inputUsdPrice: "1" }).ok) {
-    throw new AppError("VALIDATION_ERROR", "Live Jupiter Trigger orders must be worth at least 10 USD.", { cause: "BELOW_PROVIDER_MINIMUM" });
+  if (!vault || vault.userPubkey !== wallet.address) {
+    throw new AppError("PROVIDER_REJECTED", "Set up your Jupiter vault on the dashboard before preparing a deposit.", { cause: "NO_VAULT" });
+  }
+
+  // 0. Reuse a fresh, unsubmitted preparation; release a stale one so it is re-crafted.
+  const current = await findActiveDepositPreparation(db, policy.id);
+  if (current?.status === "CRAFTED") {
+    if (current.submissionStartedAt) {
+      throw new AppError("POLICY_STATE_CONFLICT", "This deposit was already signed and submitted. Refresh the policy to see its status.");
+    }
+    if (now.getTime() - current.updatedAt.getTime() < CRAFTED_REUSE_MS) return fromCrafted(current, true);
+    await invalidateUnsubmittedCrafted(db, { id: current.id, now });
   }
 
   // 1. Reserve the policy's single active slot (or recover the existing preparation).
@@ -163,9 +179,23 @@ export async function prepareJupiterDeposit(
     await invalidateDepositPreparation(db, { id: reservation.id, from: ["PREPARING"], now });
     throw toJupiterAppError(error, "deposit");
   }
-  if (crafted.mint !== policy.inputMint || crafted.amount !== policy.amountAtomic.toString() || crafted.tokenDecimals !== USDC.decimals) {
+  if (
+    crafted.mint !== policy.inputMint ||
+    crafted.amount !== policy.amountAtomic.toString() ||
+    crafted.tokenDecimals !== USDC.decimals ||
+    crafted.receiverAddress !== vault.vaultPubkey
+  ) {
     await invalidateDepositPreparation(db, { id: reservation.id, from: ["PREPARING"], now });
     throw new AppError("PROVIDER_REJECTED", "Jupiter returned a deposit that does not match the policy.", { cause: "DEPOSIT_MISMATCH" });
+  }
+  try {
+    inspectUnsignedTransaction(crafted.transaction, wallet.address);
+  } catch (error) {
+    await invalidateDepositPreparation(db, { id: reservation.id, from: ["PREPARING"], now });
+    const reason = error instanceof SignedTransactionError ? error.reason : "malformed";
+    throw new AppError("PROVIDER_REJECTED", "Jupiter returned a deposit transaction Circuit cannot safely present for signing.", {
+      cause: `DEPOSIT_TX_${reason.toUpperCase()}`,
+    });
   }
 
   // 3. Commit the single-use requestId BEFORE returning the unsigned transaction.
@@ -179,5 +209,11 @@ export async function prepareJupiterDeposit(
   if (!saved) {
     throw new AppError("POLICY_STATE_CONFLICT", "The deposit preparation changed while crafting. Try again.", { retryable: true });
   }
+  await appendPolicyEvent(db, {
+    policyId: policy.id,
+    eventType: POLICY_EVENT_TYPES.DEPOSIT_PREPARED,
+    source: "JUPITER",
+    payload: { preparationId: saved.id, depositRequestId: saved.depositRequestId, receiverAddress: saved.receiverAddress, amountAtomic: saved.inputAmountAtomic.toString() },
+  });
   return fromCrafted(saved, false);
 }

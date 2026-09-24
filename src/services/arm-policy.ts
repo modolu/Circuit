@@ -85,7 +85,7 @@ export async function armPolicy(
   { provider }: { provider: ExecutionProvider },
 ): Promise<Policy> {
   if (!provider.configured) {
-    throw new AppError("PROVIDER_UNAVAILABLE", "Live Jupiter execution is not configured yet.");
+    throw new AppError("PROVIDER_UNAVAILABLE", "Live policies are armed by authorizing a Jupiter deposit, not with this action.");
   }
 
   const claim = await claimForArming(db, { walletId: wallet.id, policyId, provider, now });

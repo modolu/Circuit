@@ -59,6 +59,16 @@ export const POLICY_EVENT_TYPES = {
   CANCELLED: "POLICY_CANCELLED",
   EXPIRED: "POLICY_EXPIRED",
   FAILED: "POLICY_FAILED",
+  // Live Jupiter Trigger lifecycle (Task 9)
+  DEPOSIT_PREPARED: "JUPITER_DEPOSIT_PREPARED",
+  DEPOSIT_SIGNED: "DEPOSIT_SIGNED",
+  PROVIDER_SUBMISSION_UNCONFIRMED: "PROVIDER_SUBMISSION_UNCONFIRMED",
+  PROVIDER_ORDER_RECOVERED: "PROVIDER_ORDER_RECOVERED",
+  PROVIDER_ORDER_AMBIGUOUS: "PROVIDER_ORDER_AMBIGUOUS",
+  PROVIDER_STATE_CHANGED: "PROVIDER_STATE_CHANGED",
+  CANCEL_INITIATED: "PROVIDER_CANCEL_INITIATED",
+  WITHDRAWAL_SIGNED: "WITHDRAWAL_SIGNED",
+  FUNDS_WITHDRAWN: "FUNDS_WITHDRAWN",
 } as const;
 
 /** Provider identifiers stored on `policies.provider`. The mock id can never be mistaken for real Jupiter. */
@@ -96,6 +106,49 @@ export function normalizeProviderState(raw: string): ProviderOrderState | "UNKNO
 
 export function policyStatusForProviderState(state: ProviderOrderState): PolicyStatus {
   return PROVIDER_STATE_TO_POLICY_STATUS[state];
+}
+
+// ---------------------------------------------------------------------------
+// Live Jupiter Trigger provider states (Task 9; the single live mapping)
+// ---------------------------------------------------------------------------
+
+/**
+ * Jupiter's documented price-order display states (`orderState`), normalized. They are
+ * richer than Circuit's lifecycle, so they are stored separately (`policies.provider_state`)
+ * and never forced into fake Circuit transitions.
+ */
+export const LIVE_PROVIDER_STATES = [
+  "PENDING",
+  "OPEN",
+  "EXECUTING",
+  "FILLED",
+  "PENDING_WITHDRAW",
+  "CANCELLED",
+  "EXPIRED",
+  "FAILED",
+] as const;
+export type LiveProviderState = (typeof LIVE_PROVIDER_STATES)[number];
+
+/**
+ * The Circuit status each live provider state implies:
+ * - PENDING (deposit processing) → ARMING: the order is not confirmed live yet.
+ * - OPEN, EXECUTING (incl. partial fills) and PENDING_WITHDRAW (cancel started, funds
+ *   still in the vault) → ARMED: the order exists but is not terminal.
+ * - FILLED → EXECUTED, CANCELLED → CANCELLED, EXPIRED → EXPIRED, FAILED → FAILED.
+ */
+const LIVE_STATE_TO_POLICY_STATUS: Record<LiveProviderState, PolicyStatus> = {
+  PENDING: "ARMING",
+  OPEN: "ARMED",
+  EXECUTING: "ARMED",
+  PENDING_WITHDRAW: "ARMED",
+  FILLED: "EXECUTED",
+  CANCELLED: "CANCELLED",
+  EXPIRED: "EXPIRED",
+  FAILED: "FAILED",
+};
+
+export function policyStatusForLiveProviderState(state: LiveProviderState): PolicyStatus {
+  return LIVE_STATE_TO_POLICY_STATUS[state];
 }
 
 /** The application idempotency key for arming a policy. A policy is armed at most once, so the key is fixed per policy. */

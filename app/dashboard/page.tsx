@@ -40,7 +40,7 @@ const INFRASTRUCTURE = [
     role: "Execution rail",
     body: "Autonomous price-trigger execution that keeps running without Circuit or your browser.",
     milestone: "Milestone 4",
-    integrated: false,
+    integrated: true,
   },
   {
     provider: "Solana",

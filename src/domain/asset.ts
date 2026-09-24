@@ -63,15 +63,31 @@ export const jupiterVerificationSchema = z.object({
 export type JupiterVerification = z.infer<typeof jupiterVerificationSchema>;
 
 /**
- * Circuit compiles triggers from the Pyth UNDERLYING price (e.g. AAPL), but Jupiter
- * evaluates them on the TOKEN's USD price (e.g. AAPLx, which has a ScaledUiAmount
- * multiplier). Live orders stay blocked until this relationship is deliberately
- * calibrated: no guessed conversion.
+ * Reference basis (Task 9): what Circuit's trigger number means on each side.
+ *
+ * - Circuit compiles the USD target from the INDEPENDENT Pyth underlying-equity reference
+ *   (e.g. `Equity.US.AAPL/USD`).
+ * - Jupiter Trigger monitors the TRIGGER TOKEN's own secondary-market USD price
+ *   (e.g. AAPLx/USD) against that same number. The target is sent UNCHANGED
+ *   (`triggerMapping: "IDENTITY"`): no ScaledUiAmount multiplier and no invented
+ *   basis adjustment is applied. ScaledUiAmount changes displayed token quantities
+ *   only; raw amounts are used for transactions, and the token's quoted USD price is
+ *   already per displayed (share-equivalent) token.
+ * - The token can trade at a premium or discount to the underlying, and Circuit must say
+ *   so. Pyth never controls Jupiter's trigger engine.
+ *
+ * `RESOLVED` records that this decision (and its disclosure) is deliberate for the asset.
+ * Missing or `UNRESOLVED` evidence blocks live deposits.
  */
-export const executionPriceCalibrationSchema = z.object({
-  status: z.enum(["REQUIRED", "CALIBRATED"]),
+export const referenceBasisSchema = z.object({
+  status: z.enum(["RESOLVED", "UNRESOLVED"]),
+  policyReference: z.string().min(1),
+  executionMonitor: z.string().min(1),
+  triggerMapping: z.literal("IDENTITY"),
+  disclosure: z.string().min(1),
   detail: z.string().min(1),
 });
+export type ReferenceBasis = z.infer<typeof referenceBasisSchema>;
 
 export const assetMetadataSchema = z.object({
   reference: primaryReferenceSchema,
@@ -80,7 +96,7 @@ export const assetMetadataSchema = z.object({
   // Live-execution evidence. Missing or malformed evidence reads as "not verified" (the
   // live gate fails closed) and never breaks reference reads that don't need it.
   jupiter: jupiterVerificationSchema.optional().catch(undefined),
-  executionPriceCalibration: executionPriceCalibrationSchema.optional().catch(undefined),
+  referenceBasis: referenceBasisSchema.optional().catch(undefined),
   verification: z
     .object({ pythLiveCheck: z.object({ status: z.string() }).optional().catch(undefined) })
     .optional()
@@ -90,16 +106,16 @@ export const assetMetadataSchema = z.object({
 export type LiveBuyGateFailure =
   | "PYTH_LIVE_CHECK_REQUIRED"
   | "BUY_DEPOSIT_NOT_COMPATIBLE"
-  | "EXECUTION_PRICE_CALIBRATION_REQUIRED";
+  | "REFERENCE_BASIS_UNRESOLVED";
 
-/** Whether an asset may have a live Jupiter BUY deposit prepared. Missing evidence means no. */
+/** Whether an asset may have a live Jupiter BUY deposit prepared or armed. Missing evidence means no. */
 export function liveBuyDepositGate(metadata: AssetMetadata): { ok: true } | { ok: false; reason: LiveBuyGateFailure } {
   if (metadata.verification?.pythLiveCheck?.status !== "PASSED") return { ok: false, reason: "PYTH_LIVE_CHECK_REQUIRED" };
   if (!metadata.jupiter || metadata.jupiter.sides.BUY.result === "RESTRICTED" || metadata.jupiter.sides.BUY.result === "FAILED") {
     return { ok: false, reason: "BUY_DEPOSIT_NOT_COMPATIBLE" };
   }
-  if (metadata.executionPriceCalibration?.status !== "CALIBRATED") {
-    return { ok: false, reason: "EXECUTION_PRICE_CALIBRATION_REQUIRED" };
+  if (metadata.referenceBasis?.status !== "RESOLVED") {
+    return { ok: false, reason: "REFERENCE_BASIS_UNRESOLVED" };
   }
   return { ok: true };
 }
