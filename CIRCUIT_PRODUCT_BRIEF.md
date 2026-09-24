@@ -4,18 +4,30 @@
 
 **Hackathon:** STOCKLANA  
 **Network:** Solana  
-**Product type:** Policy-controlled tokenized-stock execution  
+**Product type:** Policy-controlled execution for tokenized public and private stocks  
 **Working name:** Circuit  
 **Primary user:** Self-directed onchain investor / agent operator  
 **MVP execution rail:** Jupiter Trigger V2  
-**Reference market data:** Pyth Pro / Pyth equity feeds  
+**Reference market data:** Pyth Pro equity feeds (public stocks) · PreStocks mark prices (private / pre-IPO exposure)  
 **Primary build target:** Main STOCKLANA track, with sponsor-track eligibility claimed only where the final implementation satisfies the sponsor rules.
 
 ---
 
 ## 1. Executive summary
 
-Circuit is a policy-controlled execution layer for tokenized stocks on Solana.
+Circuit is a policy-controlled execution layer for tokenized stocks on Solana: **programmable execution for tokenized public and private stocks on Solana.**
+
+It covers two kinds of stock exposure with one experience:
+
+```text
+PUBLIC-MARKET STOCKS            e.g. AAPLx
+  reference: Pyth underlying-equity feed (AAPL/USD)
+
+PRIVATE / PRE-IPO EXPOSURE      e.g. ANTHROPIC PreStocks
+  reference: official PreStocks mark price
+```
+
+Different stock markets expose different reference data, but users should get one consistent programmable execution experience.
 
 A user should not have to sit in front of a brokerage screen waiting for a price, manually compare an onchain quote to an external market reference, or wake up because a stock token trades outside traditional exchange hours. Circuit lets the user express a constrained execution policy once, authorize it, and let the underlying Solana execution infrastructure carry it out when the configured conditions are met.
 
@@ -57,7 +69,7 @@ Expiry
 24 hours
 
 Reference data
-Pyth equity feed
+Pyth equity feed (public stock) or PreStocks mark (private stock)
 
 Execution
 Jupiter Trigger order
@@ -194,6 +206,8 @@ ONCHAIN FILL
 AUDIT TRAIL
 ```
 
+The reference step depends on the market: an independent Pyth equity feed for a tokenized public stock, the official PreStocks mark for tokenized private-company exposure. Everything after it is the same product.
+
 Circuit is the policy and product layer.
 
 It should not rebuild:
@@ -232,6 +246,8 @@ The opportunity is not merely "stocks on blockchain."
 The opportunity is:
 
 > **stocks as programmable state.**
+
+The same is now true beyond public markets: tokenized private / pre-IPO exposure (for example PreStocks) trades onchain next to tokenized public stocks, with its own reference data.
 
 Circuit focuses on the most immediately understandable use of that property: conditional execution.
 
@@ -281,7 +297,8 @@ Primary:
 
 Secondary:
 
-- show the independent market reference before arming;
+- show the relevant market reference before arming (Pyth for a public stock, the PreStocks mark for a private-company token);
+- show how the token's market price compares to that reference (premium or discount);
 - show whether the reference is fresh;
 - show the difference between trigger and current market;
 - keep maximum capital at risk explicit;
@@ -327,6 +344,8 @@ when USD price <= 170
 
 The primary four price-order flows must not be jeopardized.
 
+SELL policies are offered only where the asset's execution path is technically verified; the current live assets are BUY-only (see MVP assets).
+
 Every policy has:
 
 ```text
@@ -339,19 +358,34 @@ maximum slippage
 expiry
 ```
 
-Circuit also records the Pyth reference snapshot, feed timestamp, freshness, wallet, Jupiter order identifier, and transaction/fill evidence.
+Circuit also records the captured reference snapshot (Pyth price and feed timestamp, or PreStocks mark and token price with the time Circuit received them), freshness, wallet, Jupiter order identifier, and transaction/fill evidence.
 
 ### MVP assets
 
-Start with **2–4 liquid Solana tokenized stocks** that satisfy all of:
+Start with a small set of liquid Solana tokenized stocks that satisfy all of:
 
-1. verified mint;
+1. verified mint from a first-party source;
 2. routable execution path;
-3. matching Pyth equity/reference feed;
+3. a matching reference: a Pyth equity feed (public stock) or an official PreStocks mark (private stock);
 4. adequate live liquidity for a small demo;
 5. legal/technical availability to the builder environment.
 
-Do not hard-code a large catalog before verifying routes.
+Do not hard-code a large catalog before verifying routes. A product listed by a provider is not automatically executable in Circuit: each asset is curated and verified.
+
+Current support:
+
+```text
+AAPLx (public stock, Pyth reference)
+  identity verified · Pyth AAPL/USD mapping verified · Jupiter token + routing verified
+  live execution currently blocked: this environment's Pyth key lacks US-equity entitlement
+
+ANTHROPIC (PreStocks private-market exposure, PreStocks mark reference)
+  PreStocks identity verified · exact Solana mint verified · Jupiter token recognition verified
+  BUY route verified · BUY policies enabled
+  live SELL disabled: the token's Token-2022 transfer-fee / transfer-hook settings restrict it as a Trigger deposit
+```
+
+The AAPLx blocker is an access issue in the current environment, not a product limitation: it lifts once an equity-entitled Pyth key passes Circuit's live check.
 
 ---
 
@@ -362,6 +396,21 @@ The MVP does not build personalized recommendations, portfolio optimization, pri
 ---
 
 ## 10. Core user experience
+
+The core flow is the same for every supported stock:
+
+```text
+connect wallet
+→ choose a verified supported stock
+→ inspect the appropriate reference
+→ define a bounded policy
+→ Circuit compiles an exact trigger
+→ review reference vs execution market
+→ authorize Jupiter
+→ persistent order lifecycle
+→ reconcile provider state
+→ inspect audit trail and onchain evidence
+```
 
 ### 10.1 Connect wallet
 
@@ -377,9 +426,11 @@ No email registration in the hackathon MVP. The connected wallet is the identity
 
 ### 10.2 Explore supported stock tokens
 
-Each asset shows ticker, issuer/product label, verified mint, Pyth feed, current reference price, freshness, and route availability.
+Each asset shows ticker, issuer/product label, verified mint, its reference (Pyth feed or PreStocks mark), current reference price, freshness, and route availability.
 
 Never infer mint addresses from ticker strings.
+
+**Markets.** A Markets view lists the current PreStocks products from PreStocks' own catalog. For each product it shows the PreStocks mark, the token market price, the premium or discount between them, the Solana contract, and Circuit's technical support status (supported, route verified, unverified, or not eligible, for example a product in a listing transition). Policies can be created only for curated, verified assets; the catalog is discovery, not an execution list.
 
 ### 10.3 Create policy
 
@@ -395,7 +446,7 @@ Max slippage:     0.50%
 Expiry:           24 hours
 ```
 
-Review card:
+Review card (public stock; a PreStocks policy shows the PreStocks mark, token market price and premium/discount instead):
 
 ```text
 CURRENT REFERENCE
@@ -421,6 +472,8 @@ Jupiter Trigger
 ### 10.4 Explain before authorization
 
 > Circuit will authorize an order to buy up to 100 USDC of NVDA token if the configured USD trigger condition is reached before expiry. Execution is routed by Jupiter and may fill at a different price within the configured execution constraints.
+
+The review always distinguishes the **reference** (what the target was compiled from) from the **execution market** (what Jupiter monitors: the token's own USD price).
 
 ### 10.5 Arm policy
 
@@ -464,7 +517,29 @@ Jupiter remains the external source of truth for order lifecycle. Circuit never 
 
 ---
 
-## 12. The role of Pyth
+## 12. The role of reference data
+
+### 12.1 Reference providers and roles
+
+```text
+Pyth        independent public-equity reference data
+PreStocks   private / pre-IPO product data and the mark-price reference
+Circuit     policy definition, deterministic compilation, state management, auditability
+Jupiter     execution rail
+Solana      wallet authorization and onchain evidence
+```
+
+Each supported asset has exactly one reference provider, chosen by Circuit's curated catalog, never by the user's request, and there is no silent fallback from one provider to another.
+
+### 12.2 Public-market path: Pyth
+
+```text
+AAPLx
+→ Pyth underlying AAPL/USD reference
+→ Circuit deterministic policy compiler
+→ Jupiter monitors AAPLx/USD
+→ Solana settlement and evidence
+```
 
 Pyth is not decorative market data.
 
@@ -489,6 +564,51 @@ A stale or unavailable feed blocks relative-policy compilation.
 
 Unless execution-time oracle enforcement is implemented and verified, Circuit must **not** claim that Pyth prevents Jupiter from executing at a bad price. Pyth informs and validates Circuit's policy layer; Jupiter owns trigger execution.
 
+Pyth is the independent reference for the **underlying** equity. Jupiter monitors the **token's** own USD price (AAPLx/USD), not Pyth. Circuit sends the compiled USD target to Jupiter unchanged, and says plainly that AAPLx is a secondary-market token that can trade at a premium or discount to underlying AAPL.
+
+### 12.3 Private / pre-IPO path: PreStocks
+
+```text
+PreStocks product (e.g. ANTHROPIC)
+→ official PreStocks mark price
+→ Circuit deterministic policy compiler
+→ Jupiter monitors the actual PreStocks token/USD market price
+→ Solana settlement and evidence
+```
+
+ANTHROPIC is the current verified implementation. Other PreStocks products appear in Markets but are not executable until each one is individually verified.
+
+### 12.4 The PreStocks reference model
+
+```text
+MARK PRICE     PreStocks' benchmark value: the policy's reference
+TOKEN PRICE    the current market price of the onchain PreStocks token
+PREMIUM /      how far the token trades above or below the mark
+DISCOUNT
+```
+
+- Circuit captures the mark when the policy is created and stores it with the policy.
+- A relative policy becomes a deterministic absolute USD trigger:
+
+```text
+PreStocks mark: $1,000.00
+User rule: BUY 3% below mark
+Compiled trigger: $970.00
+```
+
+- Jupiter then watches the token's market price against that fixed trigger. The token may trade at a premium or discount to the mark.
+- Later mark changes do not modify an already-compiled order. To follow a new mark, the user creates a new policy.
+
+### 12.5 Trust and risk
+
+For private-market tokens, Circuit states concisely that:
+
+- private / pre-IPO exposure carries significant risk;
+- the token market price may differ from the mark;
+- liquidity may vary;
+- availability may depend on jurisdiction;
+- Circuit does not present these tokens as direct ownership of the underlying company, unless the issuer explicitly provides such rights.
+
 ---
 
 ## 13. The role of Jupiter
@@ -498,6 +618,8 @@ Jupiter Trigger V2 is the execution engine.
 It already provides autonomous trigger orders, USD price triggers, buy/sell above/below, OCO/OTOCO, DCA, vault-based execution, routing, partial fills, slippage controls, and order lifecycle management.
 
 Circuit should not rebuild these systems.
+
+Jupiter triggers on the traded token's own USD price. For every asset, the reference (Pyth or the PreStocks mark) informs the policy; Jupiter's market price decides execution.
 
 The differentiation is:
 
@@ -563,6 +685,20 @@ For the hackathon, the web product is primary.
 
 Circuit safety is based on bounded authority, not intelligence.
 
+Circuit does not recommend what stock to buy or sell, public or private. The user chooses:
+
+```text
+asset
+BUY / SELL (where technically supported)
+amount
+trigger direction
+fixed or relative trigger
+slippage
+expiry
+```
+
+Circuit deterministically compiles and executes those instructions. There are no AI investment recommendations.
+
 A policy specifies one wallet, one input asset, one target asset, one side, one amount, one trigger, one slippage ceiling, and one expiry.
 
 Circuit may not silently increase spend, change the asset, extend expiry, remove the trigger, reverse the side, or create unrelated orders.
@@ -571,11 +707,13 @@ Circuit may not silently increase spend, change the asset, extend expiry, remove
 
 ## 17. Product positioning
 
-Circuit is an execution interface, not an adviser.
+> **Programmable execution for tokenized public and private stocks on Solana.**
+
+Circuit is an execution interface, not an adviser, and not a generic crypto trading terminal.
 
 Avoid language like "best stock", "recommended", "safe investment", "guaranteed", "risk-free", "AI predicts", or "will outperform".
 
-Use "reference price", "configured trigger", "user-defined policy", "execution condition", "estimated", and "historical event".
+Use "reference price", "configured trigger", "user-defined policy", "execution condition", "estimated", and "historical event". For private-market tokens, use "PreStocks mark", "token market price", "premium to mark" and "discount to mark", and avoid "undervalued", "overvalued" or "opportunity".
 
 ---
 
@@ -587,25 +725,35 @@ Versus a DEX UI: Circuit exposes intent rather than raw swap mechanics.
 
 Versus an AI trading bot: Circuit does not decide the investment thesis.
 
-Versus a generic Jupiter Trigger frontend: Circuit is specialized for tokenized equities with verified stock-token catalog, issuer identity, Pyth equity reference, freshness/session awareness, relative trigger compilation, stock-specific explanations, and an agent-readable audit trail.
+Versus a generic Jupiter Trigger frontend: Circuit is specialized for tokenized equities with verified stock-token catalog, issuer identity, the right reference for each market (Pyth equity feeds, PreStocks marks), freshness/session awareness, relative trigger compilation, stock-specific explanations, and an agent-readable audit trail.
+
+Versus a single-market app: public and private stock exposure get one consistent policy, review and audit experience.
 
 ---
 
 ## 19. Hackathon narrative
 
-> **Traditional stocks are becoming Solana assets, but their interfaces still behave like brokerages. Circuit makes stock ownership programmable. A user defines a bounded execution policy once; Circuit anchors the instruction to independent equity reference data, compiles it into an autonomous Solana order, and lets the network execute while the user is offline.**
+> **Traditional stocks are becoming Solana assets, but their interfaces still behave like brokerages. Circuit makes stock exposure programmable. A user defines a bounded execution policy once; Circuit anchors the instruction to the right reference data for that market, compiles it into an autonomous Solana order, and lets the network execute while the user is offline.**
+
+Circuit is one product with multiple reference providers, not separate Pyth and PreStocks demos: different stock markets expose different reference data, but users should get one consistent programmable execution experience.
 
 ---
 
 ## 20. Demo script
 
-1. Show the problem: tokenized stocks can remain accessible while the user is offline.
-2. Create a tiny policy on a verified stock token.
-3. Show Pyth reference, feed timestamp/freshness, and compiled trigger.
-4. Wallet authorizes the Jupiter Trigger flow.
-5. Show `DRAFT → ARMED`; reload/close to prove the browser is not the keeper.
-6. Show a live or previously completed onchain execution with transaction evidence.
-7. End with: **"The user chooses the investment. Circuit handles the execution path."**
+The primary currently reachable demo uses **ANTHROPIC / PreStocks**:
+
+1. Show the problem: tokenized stocks, public and private, can trade while the user is offline.
+2. Open **Markets**: show the live PreStocks mark, the token market price and the premium/discount for current products, and which ones Circuit supports.
+3. Choose ANTHROPIC and create a **BUY policy relative to the mark** (for example 3% below).
+4. Show the compiled deterministic USD trigger, the plain-English sentence, and the review separating reference (PreStocks mark) from execution market (Jupiter ANTHROPIC/USD).
+5. Save the **DRAFT**.
+6. Show the Jupiter execution path and policy lifecycle: prepare, review, explicit wallet authorization, ARMING → ARMED, reconciliation, cancel and withdraw.
+7. Reload the page to show persistence and the audit trail.
+8. Keep AAPLx / Pyth in the story as the public-market reference implementation: the same flow with an independent underlying-equity reference.
+9. End with: **"The user chooses the investment. Circuit handles the execution path."**
+
+Show a live funded order and its onchain evidence only if one has actually been completed; never present a simulated or hypothetical fill as real.
 
 ---
 
@@ -615,7 +763,8 @@ The MVP is complete when:
 
 - wallet connects;
 - supported stocks are verified by mint;
-- Pyth references display correctly;
+- Pyth references display correctly for public stocks;
+- PreStocks marks, token market prices and premium/discount display correctly for private-market tokens;
 - stale/carried data is distinguished;
 - a user can create a deterministic policy;
 - the policy compiles into Jupiter Trigger;
@@ -643,7 +792,7 @@ Do not add fees to the hackathon MVP unless supported transparently by the execu
 
 ## 23. Post-hackathon roadmap
 
-**Phase 1:** price policies, 2–4 stocks, Pyth, Jupiter, audit trail.  
+**Phase 1:** price policies, public stocks (Pyth) and private-market tokens (PreStocks), Jupiter, audit trail.  
 **Phase 2:** OCO, OTOCO, price-banded DCA, templates, notifications.  
 **Phase 3:** allocation and rebalance policies.  
 **Phase 4:** agent identities, spend ceilings, approved-asset scopes, MCP/API.  
@@ -681,8 +830,11 @@ The interface should be understandable in one screenshot.
 ```text
 ✓ wallet connects
 ✓ verified token catalog exists
+✓ at least one verified public-stock integration (Pyth reference)
+✓ at least one verified private-market integration (PreStocks mark reference)
 ✓ USDC input asset configured
-✓ Pyth equity reference works server-side
+✓ live first-party reference data works server-side (Pyth, PreStocks)
+✓ reference price and execution-market price are honestly distinguished
 ✓ feed freshness displayed
 ✓ relative policy compiles to fixed trigger
 ✓ all four price-order directions represented
@@ -700,7 +852,8 @@ The interface should be understandable in one screenshot.
 ✓ Pyth/Jupiter secrets never reach browser code
 ✓ errors are understandable
 ✓ core flows have automated tests
-✓ a tiny live execution or equally verifiable live order is demonstrated
+✓ Jupiter Trigger compatibility verified for the supported assets
+✓ desirable final proof: a tiny live execution or equally verifiable live order (claimed only if actually performed)
 ✓ submission copy accurately describes what Pyth and Jupiter each enforce
 ```
 
@@ -708,7 +861,7 @@ The interface should be understandable in one screenshot.
 
 ## 27. One-sentence pitch
 
-> **Circuit lets users turn tokenized-stock decisions into bounded autonomous execution policies on Solana, using Pyth for equity reference data and Jupiter for 24/7 trigger execution.**
+> **Circuit lets users turn decisions about tokenized public and private stocks into bounded autonomous execution policies on Solana, using Pyth and PreStocks for reference data and Jupiter for 24/7 trigger execution.**
 
 ---
 
