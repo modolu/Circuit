@@ -217,6 +217,16 @@ Priority order:
 5. Convert the Stocklana-facing presentation into a Colosseum company story without changing the core product.
 6. Finish GTM, founder story, pitch video, technical demo, pre-existing-work disclosure, and submission fields.
 
+## 8.1 No-funds proof completed — 2026-10-05
+
+A real production ANTHROPIC policy reached `JUPITER_DEPOSIT_PREPARED` with a real provider-crafted unsigned transaction. The transaction was decoded and verified before any wallet transaction signature. No funds moved and no provider order was created.
+
+Evidence source: `docs/COLOSSEUM_NO_FUNDS_EVIDENCE.md`.
+
+Because the connected wallet lacked the 12 USDC minimum-proof capital, funded execution was deliberately not attempted. Treat the current boundary as **REAL through deposit preparation; IMPLEMENTED + TESTED beyond it**.
+
+Submission working copy: `docs/COLOSSEUM_SUBMISSION_COPY.md`.
+
 ## 9. Funded-proof hard rule
 
 Never do any of the following without explicit user approval in the current conversation:
