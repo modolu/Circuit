@@ -12,9 +12,10 @@ Circuit is a policy-controlled execution app for tokenized stocks on Solana. A c
 |---|---|---|
 | `CIRCUIT_ARCHITECTURE.md` | Technical decisions, data model, flows, directory layout, build order | **No**, unless the user asks for a deliberate architecture change (then update it in the same commit, per §30.19) |
 | `CIRCUIT_PRODUCT_BRIEF.md` | Product scope, UX, positioning, definition of done | **No**, unless the user asks |
+| `CIRCUIT_COLOSSEUM_PLAN.md` | Current Colosseum priorities, verified production state, validation/GTM/submission plan, cut list | Yes, when verified competition state or approved priorities change |
 | `CLAUDE.md` (this file) | How to work in this repo: conventions, commands, guardrails | Yes, when conventions change |
 
-Precedence when they conflict: **ARCHITECTURE > PRODUCT BRIEF > CLAUDE.md**, except where this file records a newer, user-approved constraint. Those are listed in §19 ("Deliberate deviations"). If you find a new conflict, stop and ask. Do not resolve it silently.
+Precedence when they conflict: **ARCHITECTURE > PRODUCT BRIEF > COLOSSEUM PLAN > CLAUDE.md** for product/technical truth. `CIRCUIT_COLOSSEUM_PLAN.md` owns current competition priority and scheduling but cannot override frozen architecture/product decisions. Except where this file records a newer, user-approved constraint. Those are listed in §19 ("Deliberate deviations"). If you find a new conflict, stop and ask. Do not resolve it silently.
 
 ---
 
