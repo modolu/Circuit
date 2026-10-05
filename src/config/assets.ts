@@ -194,10 +194,10 @@ export const VERIFIED_ASSETS: readonly VerifiedAssetConfig[] = [
       pythSymbolSource: "https://pyth.dourolabs.app/v1/symbols",
       verifiedAt: "2026-09-23",
       pythLiveCheck: {
-        status: "PASSED",
-        checkedAt: "2026-09-24T17:05:38Z",
+        status: "NOT_ENTITLED",
+        checkedAt: "2026-10-05T14:29:05Z",
         detail:
-          "pnpm test:live 3/3 PASS with the deployment's existing key (US-equity access now granted): feed 922 Equity.US.AAPL/USD (equity, stable, min_channel fixed_rate@50ms) returned a FRESH regular-session price from 19 publishers, not carried forward. Earlier (2026-09-23T16:18:10Z) the same key was NOT_ENTITLED (HTTP 403, no equity grant).",
+          "pnpm test:live on 2026-10-05: the configured key returned HTTP 403 NOT_ENTITLED for both the BTC connectivity diagnostic and feed 922 Equity.US.AAPL/USD. The same key temporarily passed 3/3 on 2026-09-24 after Pyth granted All Access; that access is no longer available. Keep AAPLx reference-dependent policy creation and live execution disabled until a fresh live check passes again.",
       },
     },
     notes: [

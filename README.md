@@ -35,7 +35,7 @@ The reference and the execution market are deliberately distinct. Circuit compil
 | Asset | Reference | Status |
 |---|---|---|
 | **ANTHROPIC** (PreStocks) | PreStocks mark | Live reference; exact mint, Jupiter recognition and USDC route verified; BUY policies enabled |
-| **AAPLx** (xStocks) | Pyth AAPL/USD | Live Pyth US-equity reference; identity, exact mint, Jupiter recognition and USDC route verified; BUY policies enabled |
+| **AAPLx** (xStocks) | Pyth AAPL/USD | Identity, exact mint, Jupiter recognition and USDC route verified; current Pyth key is NOT_ENTITLED (HTTP 403 as of 2026-10-05), so reference-dependent policy creation and live execution are disabled until access is restored |
 
 ## Core safety model
 
@@ -92,11 +92,11 @@ pnpm test:jupiter-live     # Jupiter key, token, quote-only route, Trigger auth 
 pnpm test:live             # Pyth symbology and key entitlement
 ```
 
-The live probes move no funds: no taker, no signing, no deposit, no order. `pnpm test:live` depends on the Pyth key's entitlements; this deployment's key passes the US-equity check.
+The live probes move no funds: no taker, no signing, no deposit, no order. `pnpm test:live` depends on the Pyth key's entitlements; as of 2026-10-05 the configured key returns HTTP 403 `NOT_ENTITLED`, so AAPLx reference-dependent policy creation is disabled until access is restored.
 
 ## Demo
 
-1. **Markets**: live PreStocks marks, token market prices and premium/discount; ANTHROPIC (PreStocks mark) and AAPLx (Pyth AAPL/USD) are supported by Circuit.
+1. **Markets**: live PreStocks marks, token market prices and premium/discount; ANTHROPIC is policy-ready. AAPLx remains a verified integration but is shown reference-pending while the current Pyth key lacks entitlement.
 2. **New policy** with ANTHROPIC: BUY 3% below the PreStocks mark; Circuit shows the compiled USD trigger and the plain-English policy.
 3. Save the **DRAFT** and open it: captured mark snapshot, compiled trigger, audit trail.
 4. **Jupiter lifecycle**: connect Jupiter (off-chain sign-in) and the vault, then prepare → review → explicit deposit signature → ARMED → reconcile → cancel & withdraw.

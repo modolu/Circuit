@@ -43,7 +43,7 @@ export function PythMarketCard({
             {asset.symbol}
           </h2>
         </div>
-        <StatusChip tone="success">SUPPORTED</StatusChip>
+        <StatusChip tone={reference ? "success" : "warning"}>{reference ? "POLICY READY" : "REFERENCE UNAVAILABLE"}</StatusChip>
       </div>
       <dl className="mt-3">
         <Row label="Reference">
@@ -74,9 +74,13 @@ export function PythMarketCard({
         price, which may trade at a premium or discount.
       </p>
       <div className="mt-auto pt-4">
-        <ButtonLink href={`/policies/new?asset=${asset.id}`} variant="primary">
-          Create policy
-        </ButtonLink>
+        {reference ? (
+          <ButtonLink href={`/policies/new?asset=${asset.id}`} variant="primary">
+            Create policy
+          </ButtonLink>
+        ) : (
+          <p className="text-xs text-muted">Policy creation is unavailable until the live reference is restored.</p>
+        )}
       </div>
     </Card>
   );

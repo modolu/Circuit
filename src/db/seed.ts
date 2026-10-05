@@ -5,8 +5,10 @@ import { closeDb, getDb } from "./client.ts";
 import { upsertAsset } from "./repositories/assets.ts";
 
 /*
- * Seeds only the verified asset catalog from src/config/assets.ts.
- * It never invents assets: with an empty catalog it writes nothing. The PreStocks API is
+ * Synchronizes the curated asset catalog from src/config/assets.ts.
+ * A configured asset whose static verification gate now fails is retained as INACTIVE so
+ * a previously seeded row cannot keep stale live-readiness metadata. It never invents assets.
+ * The PreStocks API is
  * never used to create assets; for a curated PreStocks entry it is only re-checked that
  * the live first-party catalog still lists the EXACT mint.
  * Test fixtures live in tests/ and are never imported here.
@@ -17,12 +19,14 @@ import { upsertAsset } from "./repositories/assets.ts";
 async function seed(): Promise<void> {
   const configured = ALL_VERIFIED_ASSETS.map((entry) => verifiedAssetSchema.parse(entry));
   const ready: VerifiedAssetConfig[] = [];
+  const blocked: Array<{ asset: VerifiedAssetConfig; reason: string }> = [];
   let catalog: Awaited<ReturnType<ReturnType<typeof createPrestocksClient>["fetchCatalog"]>> | null = null;
 
   for (const asset of configured) {
     const blocker = seedBlocker(asset);
     if (blocker) {
-      console.log(`seed: skipped ${asset.symbol}: ${blocker}`);
+      blocked.push({ asset, reason: blocker });
+      console.log(`seed: disabled ${asset.symbol}: ${blocker}`);
       continue;
     }
     if (asset.referenceProvider === "PRESTOCKS") {
@@ -40,16 +44,16 @@ async function seed(): Promise<void> {
     }
     ready.push(asset);
   }
-  if (ready.length === 0) {
-    console.log(`seed: 0 of ${configured.length} configured asset(s) are ready; nothing written.`);
-    return;
-  }
-
   const db = getDb();
   await db.transaction(async (tx) => {
+    for (const { asset } of blocked) {
+      await upsertAsset(tx, { ...assetRowFromConfig(asset), active: false, inputEnabled: false, outputEnabled: false });
+    }
     for (const asset of ready) await upsertAsset(tx, assetRowFromConfig(asset));
   });
-  console.log(`seed: upserted ${ready.length} verified asset(s): ${ready.map((a) => a.symbol).join(", ")}`);
+  if (blocked.length > 0) console.log(`seed: disabled ${blocked.length} blocked asset(s): ${blocked.map(({ asset }) => asset.symbol).join(", ")}`);
+  if (ready.length > 0) console.log(`seed: upserted ${ready.length} verified asset(s): ${ready.map((a) => a.symbol).join(", ")}`);
+  if (blocked.length === 0 && ready.length === 0) console.log(`seed: 0 of ${configured.length} configured asset(s) changed.`);
 }
 
 try {

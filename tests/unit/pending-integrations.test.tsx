@@ -94,10 +94,11 @@ beforeEach(() => {
 });
 
 describe("AAPLx production config", () => {
-  it("is seedable and no longer a pending integration", () => {
-    expect(seedableAssets().map((asset) => asset.symbol)).toEqual(["AAPLx", "ANTHROPIC"]);
-    expect(pendingIntegrations(new Set())).toEqual([]);
-    expect(pendingIntegrations(new Set([ANTHROPIC_MINT]))).toEqual([]);
+  it("fails closed while current Pyth access is unavailable", () => {
+    expect(seedableAssets().map((asset) => asset.symbol)).toEqual(["ANTHROPIC"]);
+    const [pending, ...rest] = pendingIntegrations(new Set([ANTHROPIC_MINT]));
+    expect(rest).toEqual([]);
+    expect(pending).toMatchObject({ symbol: "AAPLx", referenceAccess: "PENDING", execution: "DISABLED" });
   });
 });
 
@@ -139,7 +140,7 @@ describe("/markets", () => {
     expect(html).toContain(`href="/policies/new?asset=${anthropicAsset.id}"`);
 
     const c = text(card(html, "pyth-market-AAPLx"));
-    for (const expected of ["AAPLx", "SUPPORTED", "Reference Pyth AAPL/USD", "$338.23", "FRESH", "Regular", "Token recognized · routing verified"]) {
+    for (const expected of ["AAPLx", "POLICY READY", "Reference Pyth AAPL/USD", "$338.23", "FRESH", "Regular", "Token recognized · routing verified"]) {
       expect(c).toContain(expected);
     }
     expect(c).not.toMatch(/PreStocks|Crypto\.AAPLX/);
@@ -149,7 +150,7 @@ describe("/markets", () => {
   it("keeps ANTHROPIC supported when Pyth is unavailable, and shows no AAPL value rather than an old one", async () => {
     pythAvailable = false;
     const html = renderToStaticMarkup(await MarketsPage());
-    expect(text(card(html, "supported-markets"))).toMatch(/ANTHROPIC[\s\S]*SUPPORTED/);
+    expect(text(card(html, "supported-markets"))).toMatch(/ANTHROPIC[\s\S]*POLICY READY/);
     const c = text(card(html, "pyth-market-AAPLx"));
     expect(c).toContain("Unavailable right now");
     expect(c).not.toMatch(/\$\s?\d/);

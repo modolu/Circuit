@@ -24,7 +24,7 @@ export const metadata: Metadata = { title: "Markets" };
 export const dynamic = "force-dynamic";
 
 const SUPPORT: Record<MarketSupportState, { tone: ChipTone; label: string }> = {
-  SUPPORTED: { tone: "success", label: "SUPPORTED" },
+  SUPPORTED: { tone: "success", label: "POLICY READY" },
   ROUTE_VERIFIED: { tone: "info", label: "ROUTE VERIFIED" },
   UNVERIFIED: { tone: "muted", label: "UNVERIFIED" },
   NOT_ELIGIBLE: { tone: "warning", label: "TRANSITION · NOT ELIGIBLE" },

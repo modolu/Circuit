@@ -56,13 +56,12 @@ describe("verified asset catalog (Pyth)", () => {
     expect(aaplx.verification.pythSymbolSource).toBe("https://pyth.dourolabs.app/v1/symbols");
   });
 
-  it("seeds a Pyth asset only when its Pyth reference passed a live check", () => {
-    expect(aaplx.verification.pythLiveCheck.status).toBe("PASSED"); // pnpm test:live, 2026-09-24
-    expect(seedableAssets([aaplx])).toEqual([aaplx]);
-    // An environment whose key lacks equity access stays blocked.
-    const notEntitled: VerifiedAssetConfig = { ...aaplx, verification: { ...aaplx.verification, pythLiveCheck: { ...aaplx.verification.pythLiveCheck, status: "NOT_ENTITLED" } } };
-    expect(seedableAssets([notEntitled])).toEqual([]);
-    expect(seedBlocker(notEntitled)).toMatch(/NOT_ENTITLED/);
+  it("seeds a Pyth asset only when its current Pyth reference check passes", () => {
+    expect(aaplx.verification.pythLiveCheck.status).toBe("NOT_ENTITLED"); // pnpm test:live, 2026-10-05
+    expect(seedableAssets([aaplx])).toEqual([]);
+    expect(seedBlocker(aaplx)).toMatch(/NOT_ENTITLED/);
+    const passed: VerifiedAssetConfig = { ...aaplx, verification: { ...aaplx.verification, pythLiveCheck: { ...aaplx.verification.pythLiveCheck, status: "PASSED" } } };
+    expect(seedableAssets([passed])).toEqual([passed]);
   });
 
   it("rejects fictional mints and non-equity primary references", () => {
@@ -84,7 +83,7 @@ describe("curated PreStocks asset", () => {
     expect("feedId" in anthropic.reference).toBe(false);
     expect("pythLiveCheck" in anthropic.verification).toBe(false);
     expect(seedBlocker(anthropic)).toBeNull();
-    expect(seedableAssets(ALL_VERIFIED_ASSETS).map((a) => a.symbol)).toEqual(["AAPLx", "ANTHROPIC"]);
+    expect(seedableAssets(ALL_VERIFIED_ASSETS).map((a) => a.symbol)).toEqual(["ANTHROPIC"]);
     // Isolated from Pyth: still seedable next to a Pyth asset whose key lacks equity access.
     const pythBlocked: VerifiedAssetConfig = { ...aaplx, verification: { ...aaplx.verification, pythLiveCheck: { ...aaplx.verification.pythLiveCheck, status: "NOT_ENTITLED" } } };
     expect(seedableAssets([pythBlocked, anthropic]).map((a) => a.symbol)).toEqual(["ANTHROPIC"]);
