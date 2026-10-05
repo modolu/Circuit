@@ -28,17 +28,17 @@ export default async function ConnectPage() {
     <main className="mx-auto grid w-full max-w-[1180px] items-center gap-12 px-4 py-14 sm:px-6 lg:min-h-[calc(100dvh-56px-60px)] lg:grid-cols-[1.1fr_1fr] lg:gap-14 lg:py-16">
       <div>
         <SectionLabel tone="accent" className="mb-[18px]">
-          Programmable execution for tokenized public and private stocks on Solana
+          The policy layer for onchain capital markets
         </SectionLabel>
         <h1 className="text-[32px] leading-[1.08] font-semibold tracking-[-0.025em] sm:text-[44px]">
-          Stocks that never sleep.
+          Your investment decision.
           <br />
-          <span className="text-accent">Execution that doesn&apos;t need you awake.</span>
+          <span className="text-accent">Bounded execution while you&apos;re away.</span>
         </h1>
         <p className="mt-5 mb-8 max-w-[460px] text-base leading-relaxed text-muted">
-          Define a bounded rule for a tokenized stock once. Circuit checks it against a reference (Pyth for public
-          equities, the PreStocks mark for tokenized private-company exposure), compiles it into an autonomous order,
-          and keeps the evidence of exactly what happened.
+          Circuit turns a rule you choose into a deterministic execution policy with fixed capital, trigger, slippage,
+          and expiry limits. The current wedge is tokenized stocks on Solana: Circuit captures external reference context,
+          prepares execution through Jupiter Trigger, and keeps an auditable record of the lifecycle.
         </p>
 
         <WalletSignInPanel
